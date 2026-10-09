@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# sensor-simulator - nodos C/D (generacion de eventos)
+# Todas las propiedades pueden sobreescribirse con variables de entorno, p. ej.
+#   SIMULATOR_ZONES=1,2,3,4,5,6  KAFKA_BOOTSTRAP_SERVERS=192.168.1.10:9092
+# ---------------------------------------------------------------------------
+server:
+  port: 8080
+
+spring:
+  application:
+    name: sensor-simulator
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all                       # el broker confirma solo cuando el mensaje quedo escrito
+      compression-type: lz4
+      properties:
+        enable.idempotence: true      # reintentos sin duplicados en el broker
+        linger.ms: 5                  # agrupa mensajes 5 ms para mayor throughput
+        delivery.timeout.ms: 30000    # tras 30 s sin confirmacion se considera fallido -> spool
+        request.timeout.ms: 10000
+        max.block.ms: 5000
+  task:
+    scheduling:
+      pool:
+        size: 4
+
+simulator:
+  node-name: ${SIMULATOR_NODE_NAME:nodo-c}
+  zones: ${SIMULATOR_ZONES:1,2,3,4,5,6,7,8,9,10,11,12}
+  baseline-enabled: ${SIMULATOR_BASELINE_ENABLED:true}
+  rates-per-zone:          # eventos por segundo por zona (12 zonas -> ~13.5 eventos/s en total)
+    PANIC: 0.001
+    LPR: 0.6
+    SPEED: 0.5
+    ACOUSTIC: 0.02
+    CITIZEN_REPORT: 0.002
+  speed-anomaly-probability: 0.001
+  lpr-anomaly-probability: 0.001
+  watchlist-plates: P512KLM,P777HTR,M045BBC
+  spool-dir: ${SIMULATOR_SPOOL_DIR:./spool}
+  alert-service-url: ${ALERT_SERVICE_URL:http://localhost:8083}
+  alert-service-user: ${OPERATOR_USER:operador}
+  alert-service-password: ${OPERATOR_PASSWORD:operador123}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      node: ${simulator.node-name}

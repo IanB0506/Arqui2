@@ -1,0 +1,7 @@
+.git
+**/target/*
+!**/target/app.jar
+docs
+informe
+*.md
+.env

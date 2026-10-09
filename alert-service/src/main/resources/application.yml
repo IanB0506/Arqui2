@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# alert-service - nodo B
+# ---------------------------------------------------------------------------
+server:
+  port: 8083
+
+spring:
+  application:
+    name: alert-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:centinela}
+    username: ${DB_USER:centinela}
+    password: ${DB_PASSWORD:centinela}
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    placeholders:
+      grafanaPassword: ${GRAFANA_DB_PASSWORD:grafana-reader}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 500
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:centinela-redis}
+      timeout: 2s
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+alerts:
+  plate-hmac-secret: ${PLATE_HMAC_SECRET:dev-cambiar-esta-llave-en-produccion}
+  watchlist-plates: P512KLM,P777HTR,M045BBC
+  plate-retention: 30d
+  alert-expiry: 2h
+  event-store-concurrency: 2
+  slo:
+    latency-threshold-ms: 2000      # "alerta generada en menos de 2 segundos desde el evento"
+    target-ratio: 0.95              # ...en al menos el 95 % de los casos
+    window: 5m
+    freshness-threshold-ms: 10000   # los datos deben verse en el dashboard en menos de 10 s
+  security:
+    operator-user: ${OPERATOR_USER:operador}
+    operator-password: ${OPERATOR_PASSWORD:operador123}
+    admin-user: ${ADMIN_USER:admin}
+    admin-password: ${ADMIN_PASSWORD:admin123}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      node: ${NODE_NAME:nodo-b}

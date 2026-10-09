@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# ingestion-service - nodo B (puede escalarse con instancias extra en nodos C/D)
+# ---------------------------------------------------------------------------
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ingestion-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      group-id: ingestion
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 200
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      compression-type: lz4
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:centinela-redis}
+      timeout: 2s
+
+ingestion:
+  plate-hmac-secret: ${PLATE_HMAC_SECRET:dev-cambiar-esta-llave-en-produccion}
+  speed-tolerance: 0.3          # exceso = velocidad > limite * 1.3  (60 km/h -> 78 km/h)
+  default-speed-limit: 60
+  coordinate-decimals: 3        # ~110 m de precision para ubicaciones de ciudadanos
+  max-clock-skew: 2m
+  max-event-age: 24h
+  allow-historical: ${INGESTION_ALLOW_HISTORICAL:false}
+  dedup-ttl: 10m
+  degraded-sample-rate: 0.1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      node: ${NODE_NAME:nodo-b}

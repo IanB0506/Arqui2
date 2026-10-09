@@ -1,0 +1,46 @@
+package gt.umg.centinela.ingestion.pipeline;
+
+import gt.umg.centinela.common.Topics;
+import gt.umg.centinela.common.model.SensorType;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+
+/**
+ * Consume los cinco topics crudos. Un listener por topic: asi una avalancha de LPR no bloquea el
+ * procesamiento de botones de panico (cada topic tiene sus propios hilos consumidores).
+ */
+@Component
+public class RawEventListener {
+
+    private final IngestionPipeline pipeline;
+
+    public RawEventListener(IngestionPipeline pipeline) {
+        this.pipeline = pipeline;
+    }
+
+    @KafkaListener(topics = Topics.RAW_PANIC, concurrency = "${ingestion.concurrency.panic:2}")
+    public void panic(ConsumerRecord<String, String> record) {
+        pipeline.process(SensorType.PANIC, record.value());
+    }
+
+    @KafkaListener(topics = Topics.RAW_LPR, concurrency = "${ingestion.concurrency.lpr:3}")
+    public void lpr(ConsumerRecord<String, String> record) {
+        pipeline.process(SensorType.LPR, record.value());
+    }
+
+    @KafkaListener(topics = Topics.RAW_SPEED, concurrency = "${ingestion.concurrency.speed:3}")
+    public void speed(ConsumerRecord<String, String> record) {
+        pipeline.process(SensorType.SPEED, record.value());
+    }
+
+    @KafkaListener(topics = Topics.RAW_ACOUSTIC, concurrency = "${ingestion.concurrency.acoustic:1}")
+    public void acoustic(ConsumerRecord<String, String> record) {
+        pipeline.process(SensorType.ACOUSTIC, record.value());
+    }
+
+    @KafkaListener(topics = Topics.RAW_CITIZEN, concurrency = "${ingestion.concurrency.citizen:1}")
+    public void citizen(ConsumerRecord<String, String> record) {
+        pipeline.process(SensorType.CITIZEN_REPORT, record.value());
+    }
+}

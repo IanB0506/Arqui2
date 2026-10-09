@@ -1,0 +1,283 @@
+package gt.umg.centinela.correlation.engine;
+
+import gt.umg.centinela.common.model.AlertEvent;
+import gt.umg.centinela.common.model.AlertStatus;
+import gt.umg.centinela.common.model.Evidence;
+import gt.umg.centinela.common.model.NormalizedEvent;
+import gt.umg.centinela.common.model.SensorType;
+import gt.umg.centinela.common.model.Severity;
+import gt.umg.centinela.correlation.config.CorrelationProperties;
+import gt.umg.centinela.correlation.config.RuleDefinition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Supplier;
+
+/**
+ * Motor de correlacion e inferencia.
+ *
+ * <p>Por cada evento normalizado:
+ * <ol>
+ *   <li>Lo guarda en la ventana de su zona y tipo.</li>
+ *   <li>Si es un boton de panico, revisa abuso del dispositivo.</li>
+ *   <li>Si es una lectura LPR, revisa si la placa pertenece a un vehiculo sospechoso en fuga.</li>
+ *   <li>Evalua cada regla en la que participa su tipo de sensor: como ancla (inicia la sospecha) o
+ *       como evidencia de anclas anteriores en la misma zona.</li>
+ *   <li>Si una regla supera su umbral, abre un incidente o lo escala si la severidad subio.</li>
+ *   <li>Si es ancla de una regla con verificacion de falso positivo y aun no se corrobora, queda
+ *       pendiente: si vence el plazo sin corroborar se emite POSIBLE_FALSO_POSITIVO.</li>
+ * </ol>
+ */
+public class CorrelationEngine {
+
+    private static final Logger log = LoggerFactory.getLogger(CorrelationEngine.class);
+    private static final int MAX_ANCHORS_PER_EVALUATION = 5;
+    private static final Duration CORROBORATION_MEMORY = Duration.ofHours(1);
+
+    public static final String FALSE_POSITIVE = "POSIBLE_FALSO_POSITIVO";
+    public static final String SUSPICIOUS_DEVICE = "DISPOSITIVO_SOSPECHOSO";
+    public static final String VEHICLE_ESCAPING = "VEHICULO_EN_FUGA";
+
+    private final CorrelationProperties properties;
+    private final WindowStore windows;
+    private final CorrelationState state;
+    private final Supplier<Map<String, Double>> adjustments;
+    private final Clock clock;
+
+    public CorrelationEngine(CorrelationProperties properties, WindowStore windows, CorrelationState state,
+                             Supplier<Map<String, Double>> adjustments, Clock clock) {
+        properties.getRules().forEach(RuleDefinition::validate);
+        this.properties = properties;
+        this.windows = windows;
+        this.state = state;
+        this.adjustments = adjustments;
+        this.clock = clock;
+    }
+
+    public List<RuleDefinition> rules() {
+        return properties.getRules();
+    }
+
+    public List<AlertEvent> onEvent(NormalizedEvent event) {
+        windows.add(event);
+        List<AlertEvent> alerts = new ArrayList<>();
+        if (event.sensorType() == SensorType.PANIC) {
+            checkDeviceAbuse(event).ifPresent(alerts::add);
+        }
+        if (event.sensorType() == SensorType.LPR && event.plateHash() != null) {
+            checkSuspectVehicle(event).ifPresent(alerts::add);
+        }
+        for (RuleDefinition rule : properties.getRules()) {
+            if (rule.involvedTypes().contains(event.sensorType())) {
+                evaluateRule(rule, event).ifPresent(alerts::add);
+            }
+        }
+        return alerts;
+    }
+
+    // ------------------------------------------------------------------ reglas
+
+    private Optional<AlertEvent> evaluateRule(RuleDefinition rule, NormalizedEvent event) {
+        boolean isAnchor = rule.getAnchor().matches(event, state::isWatchlisted) && !isFlaggedPanic(event);
+        boolean isEvidence = rule.getEvidence().stream().anyMatch(m -> m.matches(event, state::isWatchlisted));
+        if (!isAnchor && !isEvidence) {
+            return Optional.empty();
+        }
+        RuleMatch best = null;
+        if (isAnchor) {
+            best = evaluate(rule, event);
+            if (!best.reachedThreshold() && rule.isFalsePositiveCheck()) {
+                state.addPending(rule.getId(), event, clock.instant().plus(properties.getFalsePositiveTimeout()));
+            }
+        }
+        if (isEvidence) {
+            for (NormalizedEvent anchor : anchorsAround(rule, event)) {
+                RuleMatch match = evaluate(rule, anchor);
+                if (best == null || match.score() > best.score()) {
+                    best = match;
+                }
+            }
+        }
+        if (best == null || !best.reachedThreshold()) {
+            return Optional.empty();
+        }
+        return openOrEscalate(best, event);
+    }
+
+    private RuleMatch evaluate(RuleDefinition rule, NormalizedEvent anchor) {
+        Instant from = anchor.eventTime().minus(rule.getWindowBefore());
+        Instant to = anchor.eventTime().plus(rule.getWindowAfter());
+        List<NormalizedEvent> candidates = new ArrayList<>();
+        for (SensorType type : rule.involvedTypes()) {
+            candidates.addAll(windows.range(anchor.zoneId(), type, from, to));
+        }
+        double adjustment = adjustments.get().getOrDefault(rule.getId() + ":" + anchor.zoneId(), 0.0);
+        return RuleEvaluator.evaluate(rule, anchor, candidates, state::isWatchlisted, adjustment);
+    }
+
+    /** Anclas de la regla en la zona cuya ventana contiene al evento (las mas recientes primero). */
+    private List<NormalizedEvent> anchorsAround(RuleDefinition rule, NormalizedEvent event) {
+        Instant from = event.eventTime().minus(rule.getWindowAfter());
+        Instant to = event.eventTime().plus(rule.getWindowBefore());
+        List<NormalizedEvent> anchors = new ArrayList<>();
+        for (SensorType type : rule.getAnchor().getSensorTypes()) {
+            windows.range(event.zoneId(), type, from, to).stream()
+                    .filter(a -> !a.eventId().equals(event.eventId()))
+                    .filter(a -> rule.getAnchor().matches(a, state::isWatchlisted))
+                    .filter(a -> !isFlaggedPanic(a))
+                    .forEach(anchors::add);
+        }
+        anchors.sort(Comparator.comparing(NormalizedEvent::eventTime).reversed());
+        return anchors.size() > MAX_ANCHORS_PER_EVALUATION ? anchors.subList(0, MAX_ANCHORS_PER_EVALUATION) : anchors;
+    }
+
+    /**
+     * Abre un incidente nuevo o, si ya existe uno del mismo tipo en la zona, lo escala cuando la
+     * severidad sube o se identifica una placa. Evita inundar al operador con alertas repetidas.
+     */
+    private Optional<AlertEvent> openOrEscalate(RuleMatch match, NormalizedEvent trigger) {
+        RuleDefinition rule = match.rule();
+        markEvidenceCorroborated(match.evidence());
+        String key = rule.getIncidentScope() == RuleDefinition.IncidentScope.ANCHOR
+                ? rule.getAlertType() + ":" + match.anchor().eventId()
+                : rule.getAlertType() + ":" + match.anchor().zoneId();
+        Optional<IncidentState> existing = state.incident(key);
+        UUID alertId;
+        int revision;
+        AlertStatus status;
+        if (existing.isEmpty()) {
+            alertId = UUID.randomUUID();
+            revision = 1;
+            status = AlertStatus.NEW;
+        } else {
+            IncidentState current = existing.get();
+            boolean higher = match.severity().isHigherThan(current.severity());
+            boolean newPlate = current.plateHash() == null && match.plateHash() != null;
+            if (!higher && !newPlate) {
+                return Optional.empty();
+            }
+            alertId = current.alertId();
+            revision = current.revision() + 1;
+            status = AlertStatus.ESCALATED;
+        }
+        state.saveIncident(key, new IncidentState(alertId, revision, match.severity(), match.score(), match.plateHash()),
+                properties.getIncidentCooldown());
+        if (rule.isTrackPlate() && match.plateHash() != null) {
+            state.registerSuspect(match.plateHash(), new SuspectState(alertId, rule.getAlertType(),
+                    match.anchor().zoneId(), clock.instant(), match.plateMasked()), properties.getSuspectTracking());
+            state.firstSuspectSightingInZone(match.plateHash(), match.anchor().zoneId(), properties.getSuspectTracking());
+        }
+        String description = String.format(Locale.ROOT, "%s en %s. Puntaje %.2f (umbral %.2f). Evidencia: %s.",
+                rule.getTitle(), match.anchor().zoneName(), match.score(), match.threshold(),
+                String.join("; ", match.reasons()));
+        AlertEvent alert = new AlertEvent(alertId, revision, rule.getId(), rule.getAlertType(), match.severity(), status,
+                match.anchor().zoneId(), match.anchor().zoneName(), match.anchor().latitude(), match.anchor().longitude(),
+                match.score(), rule.getTitle(), description, clock.instant(), match.firstEventTime(),
+                trigger.eventTime(), match.evidence(), match.plateMasked(), match.plateHash(), null);
+        log.info("ALERTA {} rev{} {} {} puntaje={} ({})", rule.getAlertType(), revision, match.severity(),
+                match.anchor().zoneName(), match.score(), status);
+        return Optional.of(alert);
+    }
+
+    private void markEvidenceCorroborated(List<Evidence> evidence) {
+        evidence.forEach(e -> state.markCorroborated(e.eventId(), CORROBORATION_MEMORY));
+    }
+
+    // ------------------------------------------------------------------ falsos positivos
+
+    /**
+     * Revisa las anclas cuyo plazo de corroboracion vencio. Si ninguna alerta las uso como evidencia
+     * se clasifican como posible falso positivo (fila 2 de la tabla 2.4 del enunciado).
+     */
+    public List<AlertEvent> sweepPending() {
+        List<AlertEvent> alerts = new ArrayList<>();
+        for (RuleDefinition rule : properties.getRules()) {
+            if (!rule.isFalsePositiveCheck()) {
+                continue;
+            }
+            for (NormalizedEvent anchor : state.claimExpiredPending(rule.getId(), clock.instant(), 100)) {
+                if (state.isCorroborated(anchor.eventId()) || isFlaggedPanic(anchor)) {
+                    continue;
+                }
+                RuleMatch last = evaluate(rule, anchor);
+                if (last.reachedThreshold()) {
+                    openOrEscalate(last, anchor).ifPresent(alerts::add);
+                    continue;
+                }
+                alerts.add(falsePositive(rule, last));
+            }
+        }
+        return alerts;
+    }
+
+    private AlertEvent falsePositive(RuleDefinition rule, RuleMatch match) {
+        NormalizedEvent anchor = match.anchor();
+        String description = String.format(Locale.ROOT,
+                "%s sin eventos complementarios en %s durante %d s. Puntaje %.2f < umbral %.2f. Evidencia: %s.",
+                rule.getAnchor().getLabel(), anchor.zoneName(), properties.getFalsePositiveTimeout().toSeconds(),
+                match.score(), match.threshold(), String.join("; ", match.reasons()));
+        log.info("POSIBLE FALSO POSITIVO {} en {} (regla {})", anchor.summary(), anchor.zoneName(), rule.getId());
+        return new AlertEvent(UUID.randomUUID(), 1, rule.getId() + "/sin-corroborar", FALSE_POSITIVE, Severity.LOW,
+                AlertStatus.AUTO_CLASSIFIED, anchor.zoneId(), anchor.zoneName(), anchor.latitude(), anchor.longitude(),
+                match.score(), "Posible falso positivo: " + rule.getTitle().toLowerCase(Locale.ROOT) + " sin corroborar",
+                description, clock.instant(), anchor.eventTime(), anchor.eventTime(), match.evidence(), null, null, null);
+    }
+
+    // ------------------------------------------------------------------ abuso de dispositivos
+
+    private Optional<AlertEvent> checkDeviceAbuse(NormalizedEvent panic) {
+        CorrelationProperties.DeviceAbuse config = properties.getDeviceAbuse();
+        long count = state.incrementDevicePanics(panic.sensorId(), config.getWindow());
+        if (count <= config.getMaxPanics() || !state.flagDevice(panic.sensorId(), config.getFlagDuration())) {
+            return Optional.empty();
+        }
+        String description = String.format(Locale.ROOT,
+                "El dispositivo %s presiono el boton de panico %d veces en %d min. Sus eventos se ignoraran "
+                        + "durante %d min para evitar falsas alarmas; revisar si es vandalismo, falla o abuso.",
+                panic.sensorId(), count, config.getWindow().toMinutes(), config.getFlagDuration().toMinutes());
+        log.info("DISPOSITIVO SOSPECHOSO {} en {}", panic.sensorId(), panic.zoneName());
+        return Optional.of(new AlertEvent(UUID.randomUUID(), 1, "R0-ABUSO-DISPOSITIVO", SUSPICIOUS_DEVICE, Severity.MEDIUM,
+                AlertStatus.NEW, panic.zoneId(), panic.zoneName(), panic.latitude(), panic.longitude(), 1.0,
+                "Dispositivo con uso anomalo del boton de panico", description, clock.instant(), panic.eventTime(),
+                panic.eventTime(), List.of(Evidence.of(panic, 1.0)), null, null, null));
+    }
+
+    private boolean isFlaggedPanic(NormalizedEvent event) {
+        return event.sensorType() == SensorType.PANIC && state.isDeviceFlagged(event.sensorId());
+    }
+
+    // ------------------------------------------------------------------ seguimiento de vehiculos
+
+    private Optional<AlertEvent> checkSuspectVehicle(NormalizedEvent lpr) {
+        Optional<SuspectState> found = state.suspect(lpr.plateHash());
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        SuspectState suspect = found.get();
+        if (lpr.zoneId() == suspect.originZoneId()
+                || !state.firstSuspectSightingInZone(lpr.plateHash(), lpr.zoneId(), properties.getSuspectTracking())) {
+            return Optional.empty();
+        }
+        Duration elapsed = Duration.between(suspect.registeredAt(), clock.instant());
+        Severity severity = lpr.anomalous() ? Severity.CRITICAL : Severity.HIGH;
+        String description = String.format(Locale.ROOT,
+                "Vehiculo placa %s vinculado al incidente %s de Zona %d detectado en %s a %.0f km/h, %d min %d s despues.",
+                lpr.plateMasked(), suspect.alertType(), suspect.originZoneId(), lpr.zoneName(),
+                lpr.value() == null ? 0 : lpr.value(), elapsed.toMinutes(), elapsed.toSecondsPart());
+        log.info("VEHICULO EN FUGA {} en {}", lpr.plateMasked(), lpr.zoneName());
+        return Optional.of(new AlertEvent(UUID.randomUUID(), 1, "R8-SEGUIMIENTO-PLACA", VEHICLE_ESCAPING, severity,
+                AlertStatus.NEW, lpr.zoneId(), lpr.zoneName(), lpr.latitude(), lpr.longitude(), 0.9,
+                "Vehiculo sospechoso en fuga", description, clock.instant(), lpr.eventTime(), lpr.eventTime(),
+                List.of(Evidence.of(lpr, 0.9)), lpr.plateMasked(), lpr.plateHash(), suspect.alertId()));
+    }
+}

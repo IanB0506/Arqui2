@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centinela Urbano - Consola</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>Centinela Urbano</h1>
+    <p class="subtitle">Consola del operador &middot; monitoreo perimetral urbano</p>
+  </div>
+  <div class="header-right">
+    <span id="live" class="live off">Conectando&hellip;</span>
+    <a id="grafana-link" href="#" target="_blank" rel="noopener">Abrir Grafana</a>
+  </div>
+</header>
+
+<section class="cards" id="summary">
+  <div class="card"><span class="label">Alertas (60 min)</span><span class="value" id="s-total">-</span></div>
+  <div class="card critical"><span class="label">Criticas</span><span class="value" id="s-critical">-</span></div>
+  <div class="card"><span class="label">Abiertas</span><span class="value" id="s-open">-</span></div>
+  <div class="card"><span class="label">Posibles falsos positivos</span><span class="value" id="s-fp">-</span></div>
+  <div class="card"><span class="label">Latencia p95 (SLO &lt; 2 s)</span><span class="value" id="s-p95">-</span></div>
+</section>
+
+<nav class="filters" id="filters">
+  <button data-filter="all" class="active">Todas</button>
+  <button data-filter="open">Abiertas</button>
+  <button data-filter="critical">Criticas</button>
+  <button data-filter="fp">Posibles falsos positivos</button>
+  <button data-filter="validated">Validadas</button>
+</nav>
+
+<main id="alerts" aria-live="polite"></main>
+
+<template id="alert-template">
+  <article class="alert">
+    <div class="alert-head">
+      <span class="badge"></span>
+      <h2 class="title"></h2>
+      <span class="zone"></span>
+      <time class="time"></time>
+    </div>
+    <p class="description"></p>
+    <div class="meta"></div>
+    <details>
+      <summary>Evidencia</summary>
+      <ul class="evidence"></ul>
+    </details>
+    <div class="actions">
+      <button class="confirm">Confirmar incidente</button>
+      <button class="false-positive">Marcar falso positivo</button>
+      <span class="validation"></span>
+    </div>
+  </article>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

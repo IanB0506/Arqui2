@@ -1,0 +1,7 @@
+target/
+.env
+*.log
+spool/
+.idea/
+.vscode/
+*.iml
