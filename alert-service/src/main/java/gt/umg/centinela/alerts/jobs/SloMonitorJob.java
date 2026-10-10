@@ -71,7 +71,7 @@ public class SloMonitorJob {
                        max(latency_ms) AS max,
                        avg(CASE WHEN latency_ms <= :threshold THEN 1.0 ELSE 0.0 END) AS ratio
                 FROM alert_revisions
-                WHERE received_at >= :since AND status IN ('NEW', 'ESCALATED') AND severity IN ('HIGH', 'CRITICAL')
+                WHERE received_at >= :since AND status IN ('NEW', 'ESCALATED', 'UPDATED') AND severity IN ('HIGH', 'CRITICAL')
                 """, p);
         Double freshness = jdbc.queryForObject("""
                 SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (stored_at - event_time)) * 1000)

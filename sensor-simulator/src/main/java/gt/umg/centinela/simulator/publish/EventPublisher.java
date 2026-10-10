@@ -55,9 +55,13 @@ public class EventPublisher {
 
     private void onFailure(SimulatedEvent event, String topic, String json, Throwable error) {
         if (CRITICAL.contains(event.type())) {
-            spool.store(topic, event.key(), json);
-            count(event.type(), "spooled");
-            log.warn("Kafka no disponible, evento critico {} guardado en spool: {}", event.eventId(), error.getMessage());
+            if (spool.store(topic, event.key(), json)) {
+                count(event.type(), "spooled");
+                log.warn("Kafka no disponible, evento critico {} guardado en spool: {}", event.eventId(), error.getMessage());
+            } else {
+                count(event.type(), "lost");
+                log.error("EVENTO CRITICO PERDIDO {}: Kafka y el spool en disco fallaron", event.eventId());
+            }
         } else {
             count(event.type(), "dropped");
             log.debug("Evento de telemetria descartado por falla de Kafka: {}", error.getMessage());

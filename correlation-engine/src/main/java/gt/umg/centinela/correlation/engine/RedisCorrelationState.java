@@ -2,7 +2,10 @@ package gt.umg.centinela.correlation.engine;
 
 import gt.umg.centinela.common.json.Json;
 import gt.umg.centinela.common.model.NormalizedEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -33,7 +36,10 @@ public class RedisCorrelationState implements CorrelationState {
     public static final String WATCHLIST_KEY = "watchlist:plates";
     public static final String ADJUSTMENTS_KEY = "correlation:threshold-adjustments";
 
+    private static final Logger log = LoggerFactory.getLogger(RedisCorrelationState.class);
+
     private final StringRedisTemplate redis;
+    private volatile Set<String> watchlist = Set.of();
 
     public RedisCorrelationState(StringRedisTemplate redis) {
         this.redis = redis;
@@ -114,13 +120,27 @@ public class RedisCorrelationState implements CorrelationState {
     }
 
     @Override
-    public boolean firstSuspectSightingInZone(String plateHash, int zoneId, Duration ttl) {
-        return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent("suspect-zone:" + plateHash + ":" + zoneId, "1", ttl));
+    public boolean firstSuspectSightingInZone(UUID alertId, int zoneId, Duration ttl) {
+        return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent("suspect-zone:" + alertId + ":" + zoneId, "1", ttl));
     }
 
+    /**
+     * Se consulta en cada lectura LPR (cientos por segundo), por eso se usa una copia local que se
+     * refresca cada 30 s en lugar de preguntar a Redis cada vez. La lista cambia muy poco.
+     */
     @Override
     public boolean isWatchlisted(String plateHash) {
-        return Boolean.TRUE.equals(redis.opsForSet().isMember(WATCHLIST_KEY, plateHash));
+        return watchlist.contains(plateHash);
+    }
+
+    @Scheduled(fixedDelay = 30_000)
+    public void refreshWatchlist() {
+        try {
+            Set<String> members = redis.opsForSet().members(WATCHLIST_KEY);
+            watchlist = members == null ? Set.of() : Set.copyOf(members);
+        } catch (RuntimeException e) {
+            log.warn("No se pudo refrescar la lista de placas robadas: {}", e.getMessage());
+        }
     }
 
     @Override

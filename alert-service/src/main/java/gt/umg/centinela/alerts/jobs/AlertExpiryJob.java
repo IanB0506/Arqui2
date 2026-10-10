@@ -28,7 +28,7 @@ public class AlertExpiryJob {
     @Scheduled(fixedDelay = 300_000, initialDelay = 60_000)
     @SchedulerLock(name = "alert-expiry", lockAtMostFor = "PT4M")
     public void expire() {
-        int expired = jdbc.update("UPDATE alerts SET status = 'EXPIRED' WHERE status IN ('NEW', 'ESCALATED') AND updated_at < ?",
+        int expired = jdbc.update("UPDATE alerts SET status = 'EXPIRED' WHERE status IN ('NEW', 'ESCALATED', 'UPDATED') AND updated_at < ?",
                 Timestamp.from(Instant.now().minus(properties.alertExpiry())));
         if (expired > 0) {
             log.info("{} alertas sin atender marcadas como EXPIRED", expired);

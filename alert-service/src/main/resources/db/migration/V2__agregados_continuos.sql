@@ -15,3 +15,7 @@ SELECT add_continuous_aggregate_policy('events_per_minute',
     start_offset      => INTERVAL '2 hours',
     end_offset        => INTERVAL '1 minute',
     schedule_interval => INTERVAL '1 minute');
+
+-- Agregacion en tiempo real: combina lo ya materializado con los minutos mas recientes
+-- para que los paneles muestren tambien el ultimo minuto (por defecto Timescale solo muestra lo materializado).
+ALTER MATERIALIZED VIEW events_per_minute SET (timescaledb.materialized_only = false);

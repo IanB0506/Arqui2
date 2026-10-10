@@ -69,7 +69,6 @@ public class CorrelationEngine {
     }
 
     public List<AlertEvent> onEvent(NormalizedEvent event) {
-        windows.add(event);
         List<AlertEvent> alerts = new ArrayList<>();
         if (event.sensorType() == SensorType.PANIC) {
             checkDeviceAbuse(event).ifPresent(alerts::add);
@@ -77,12 +76,25 @@ public class CorrelationEngine {
         if (event.sensorType() == SensorType.LPR && event.plateHash() != null) {
             checkSuspectVehicle(event).ifPresent(alerts::add);
         }
-        for (RuleDefinition rule : properties.getRules()) {
-            if (rule.involvedTypes().contains(event.sensorType())) {
-                evaluateRule(rule, event).ifPresent(alerts::add);
-            }
+        // Filtrado temprano: la gran mayoria de eventos (lecturas normales de velocidad, placas sin
+        // novedad, ruido ambiental) no cumple ninguna condicion de ninguna regla. No se guardan en las
+        // ventanas ni se evaluan: asi el costo del motor depende de los eventos relevantes, no del total.
+        List<RuleDefinition> relevant = properties.getRules().stream()
+                .filter(rule -> isRelevant(rule, event))
+                .toList();
+        if (relevant.isEmpty()) {
+            return alerts;
+        }
+        windows.add(event);
+        for (RuleDefinition rule : relevant) {
+            evaluateRule(rule, event).ifPresent(alerts::add);
         }
         return alerts;
+    }
+
+    private boolean isRelevant(RuleDefinition rule, NormalizedEvent event) {
+        return rule.getAnchor().matches(event, state::isWatchlisted)
+                || rule.getEvidence().stream().anyMatch(m -> m.matches(event, state::isWatchlisted));
     }
 
     // ------------------------------------------------------------------ reglas
@@ -142,8 +154,9 @@ public class CorrelationEngine {
     }
 
     /**
-     * Abre un incidente nuevo o, si ya existe uno del mismo tipo en la zona, lo escala cuando la
-     * severidad sube o se identifica una placa. Evita inundar al operador con alertas repetidas.
+     * Abre un incidente nuevo o, si ya existe uno del mismo tipo en la zona, lo actualiza solo cuando
+     * aporta algo: sube la severidad o aparece una placa (ESCALATED), o se suma un nuevo testigo/ancla
+     * (UPDATED). Evita inundar al operador con alertas repetidas sin ocultarle informacion nueva.
      */
     private Optional<AlertEvent> openOrEscalate(RuleMatch match, NormalizedEvent trigger) {
         RuleDefinition rule = match.rule();
@@ -155,6 +168,9 @@ public class CorrelationEngine {
         UUID alertId;
         int revision;
         AlertStatus status;
+        Severity severity = match.severity();
+        String plateHash = match.plateHash();
+        List<UUID> anchors = new ArrayList<>();
         if (existing.isEmpty()) {
             alertId = UUID.randomUUID();
             revision = 1;
@@ -163,28 +179,41 @@ public class CorrelationEngine {
             IncidentState current = existing.get();
             boolean higher = match.severity().isHigherThan(current.severity());
             boolean newPlate = current.plateHash() == null && match.plateHash() != null;
-            if (!higher && !newPlate) {
+            boolean newAnchor = !current.hasAnchor(match.anchor().eventId());
+            if (!higher && !newPlate && !newAnchor) {
                 return Optional.empty();
             }
             alertId = current.alertId();
             revision = current.revision() + 1;
-            status = AlertStatus.ESCALATED;
+            status = higher || newPlate ? AlertStatus.ESCALATED : AlertStatus.UPDATED;
+            if (!higher) {
+                severity = current.severity(); // un ancla nueva con menos evidencia no baja la severidad
+            }
+            if (plateHash == null) {
+                plateHash = current.plateHash();
+            }
+            if (current.anchorIds() != null) {
+                anchors.addAll(current.anchorIds());
+            }
         }
-        state.saveIncident(key, new IncidentState(alertId, revision, match.severity(), match.score(), match.plateHash()),
+        if (!anchors.contains(match.anchor().eventId()) && anchors.size() < 50) {
+            anchors.add(match.anchor().eventId());
+        }
+        state.saveIncident(key, new IncidentState(alertId, revision, severity, match.score(), plateHash, anchors),
                 properties.getIncidentCooldown());
         if (rule.isTrackPlate() && match.plateHash() != null) {
             state.registerSuspect(match.plateHash(), new SuspectState(alertId, rule.getAlertType(),
                     match.anchor().zoneId(), clock.instant(), match.plateMasked()), properties.getSuspectTracking());
-            state.firstSuspectSightingInZone(match.plateHash(), match.anchor().zoneId(), properties.getSuspectTracking());
+            state.firstSuspectSightingInZone(alertId, match.anchor().zoneId(), properties.getSuspectTracking());
         }
         String description = String.format(Locale.ROOT, "%s en %s. Puntaje %.2f (umbral %.2f). Evidencia: %s.",
                 rule.getTitle(), match.anchor().zoneName(), match.score(), match.threshold(),
                 String.join("; ", match.reasons()));
-        AlertEvent alert = new AlertEvent(alertId, revision, rule.getId(), rule.getAlertType(), match.severity(), status,
+        AlertEvent alert = new AlertEvent(alertId, revision, rule.getId(), rule.getAlertType(), severity, status,
                 match.anchor().zoneId(), match.anchor().zoneName(), match.anchor().latitude(), match.anchor().longitude(),
                 match.score(), rule.getTitle(), description, clock.instant(), match.firstEventTime(),
                 trigger.eventTime(), match.evidence(), match.plateMasked(), match.plateHash(), null);
-        log.info("ALERTA {} rev{} {} {} puntaje={} ({})", rule.getAlertType(), revision, match.severity(),
+        log.info("ALERTA {} rev{} {} {} puntaje={} ({})", rule.getAlertType(), revision, severity,
                 match.anchor().zoneName(), match.score(), status);
         return Optional.of(alert);
     }
@@ -265,7 +294,7 @@ public class CorrelationEngine {
         }
         SuspectState suspect = found.get();
         if (lpr.zoneId() == suspect.originZoneId()
-                || !state.firstSuspectSightingInZone(lpr.plateHash(), lpr.zoneId(), properties.getSuspectTracking())) {
+                || !state.firstSuspectSightingInZone(suspect.alertId(), lpr.zoneId(), properties.getSuspectTracking())) {
             return Optional.empty();
         }
         Duration elapsed = Duration.between(suspect.registeredAt(), clock.instant());

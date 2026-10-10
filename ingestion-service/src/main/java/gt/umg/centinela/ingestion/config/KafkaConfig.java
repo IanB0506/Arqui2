@@ -40,10 +40,10 @@ public class KafkaConfig {
         // Declara tambien los topics crudos que consume, por si arranca antes que el simulador.
         List<NewTopic> topics = new ArrayList<>();
         for (SensorType type : SensorType.values()) {
-            topics.add(TopicBuilder.name(type.rawTopic()).partitions(6).replicas(1)
+            topics.add(TopicBuilder.name(type.rawTopic()).partitions(Topics.PARTITIONS).replicas(1)
                     .config("retention.ms", String.valueOf(Duration.ofHours(24).toMillis())).build());
         }
-        topics.add(TopicBuilder.name(Topics.NORMALIZED).partitions(6).replicas(1)
+        topics.add(TopicBuilder.name(Topics.NORMALIZED).partitions(Topics.PARTITIONS).replicas(1)
                 .config("retention.ms", String.valueOf(Duration.ofHours(72).toMillis())).build());
         topics.add(TopicBuilder.name(Topics.DLQ).partitions(1).replicas(1)
                 .config("retention.ms", String.valueOf(Duration.ofDays(7).toMillis())).build());

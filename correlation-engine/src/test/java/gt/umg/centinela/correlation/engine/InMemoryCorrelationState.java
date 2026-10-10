@@ -33,6 +33,10 @@ class InMemoryCorrelationState implements CorrelationState {
 
     @Override
     public void saveIncident(String key, IncidentState state, Duration ttl) {
+        if (state == null) {
+            incidents.remove(key); // simula la expiracion del TTL
+            return;
+        }
         incidents.put(key, state);
     }
 
@@ -85,8 +89,8 @@ class InMemoryCorrelationState implements CorrelationState {
     }
 
     @Override
-    public boolean firstSuspectSightingInZone(String plateHash, int zoneId, Duration ttl) {
-        return sightings.add(plateHash + ":" + zoneId);
+    public boolean firstSuspectSightingInZone(UUID alertId, int zoneId, Duration ttl) {
+        return sightings.add(alertId + ":" + zoneId);
     }
 
     @Override

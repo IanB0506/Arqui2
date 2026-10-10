@@ -74,6 +74,21 @@ class CorrelationEngineTest {
     }
 
     @Test
+    void secondWitnessUpdatesTheOpenIncidentWithoutDuplicatingIt() {
+        feed(event(SensorType.PANIC, 6, "ROBO", null, true, "APP-10", "user-10", 0));
+        AlertEvent first = feed(event(SensorType.SPEED, 6, "EXCESO_VELOCIDAD", 90.0, true, "VEL-Z06-01", null, 10)).get(0);
+        List<AlertEvent> update = feed(event(SensorType.PANIC, 6, "ASALTO", null, true, "BTN-Z06-02", null, 30));
+        assertThat(update).singleElement().satisfies(a -> {
+            assertThat(a.alertId()).isEqualTo(first.alertId());
+            assertThat(a.status()).isEqualTo(AlertStatus.UPDATED);
+            assertThat(a.revision()).isEqualTo(2);
+            assertThat(a.severity()).isEqualTo(Severity.HIGH);
+        });
+        // una evidencia mas para el mismo ancla, sin subir de severidad, no genera otra revision
+        assertThat(feed(event(SensorType.SPEED, 6, "EXCESO_VELOCIDAD", 85.0, true, "VEL-Z06-03", null, 40))).isEmpty();
+    }
+
+    @Test
     void table24Row2LonePanicBecomesPossibleFalsePositive() {
         assertThat(feed(event(SensorType.PANIC, 10, "PANICO", null, true, "APP-2", "user-2", 0))).isEmpty();
         clock.advance(Duration.ofSeconds(60));
@@ -116,6 +131,21 @@ class CorrelationEngineTest {
             assertThat(a.severity()).isEqualTo(Severity.CRITICAL);
         });
         assertThat(feed(lpr(8, "hash-xyz123", "XYZ***", 60.0, 100))).isEmpty(); // misma zona: no se repite
+    }
+
+    @Test
+    void samePlateInANewIncidentIsTrackedAgain() {
+        escapingVehicleIsTrackedAcrossZones();
+        clock.advance(Duration.ofMinutes(12)); // vencio el cooldown del primer incidente
+        state.saveIncident("ROBO_EN_CURSO:4", null, Duration.ZERO);
+        int t = 12 * 60;
+        feed(event(SensorType.PANIC, 4, "ASALTO", null, true, "APP-9", "user-9", t));
+        feed(event(SensorType.SPEED, 4, "EXCESO_VELOCIDAD", 88.0, true, "VEL-Z04-01", null, t + 10));
+        assertThat(feed(lpr(4, "hash-xyz123", "XYZ***", 91.0, t + 12))).singleElement()
+                .extracting(AlertEvent::alertType).isEqualTo("ROBO_EN_CURSO");
+        clock.advance(Duration.ofMinutes(1));
+        assertThat(feed(lpr(8, "hash-xyz123", "XYZ***", 95.0, t + 80))).singleElement()
+                .extracting(AlertEvent::alertType).isEqualTo("VEHICULO_EN_FUGA");
     }
 
     @Test

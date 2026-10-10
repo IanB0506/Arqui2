@@ -35,7 +35,7 @@ import java.util.UUID;
  *   GET  /api/scenarios
  *   POST /api/scenarios/robo-en-curso?zone=4
  *   POST /api/replay?resource=noche-de-viernes.csv&amp;speed=2
- *   POST /api/validation          (y GET /api/validation/latest)
+ *   POST /api/validation?resetState=true   (y GET /api/validation/latest)
  * </pre>
  */
 @RestController
@@ -109,8 +109,8 @@ public class SimulatorController {
     }
 
     @PostMapping("/validation")
-    public ValidationService.ValidationReport startValidation() {
-        return validation.start();
+    public ValidationService.ValidationReport startValidation(@RequestParam(defaultValue = "true") boolean resetState) {
+        return validation.start(resetState);
     }
 
     @GetMapping("/validation/latest")

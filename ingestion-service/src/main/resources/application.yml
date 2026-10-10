@@ -9,6 +9,7 @@ spring:
     name: ingestion-service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    client-id: ${spring.application.name}-${NODE_NAME:nodo-b}   # identifica la maquina en los grupos de consumidores
     consumer:
       group-id: ingestion
       auto-offset-reset: earliest

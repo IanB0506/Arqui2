@@ -4,9 +4,11 @@ import gt.umg.centinela.common.json.Json;
 import gt.umg.centinela.common.model.NormalizedEvent;
 import gt.umg.centinela.common.model.SensorType;
 import gt.umg.centinela.correlation.config.CorrelationProperties;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -28,13 +30,18 @@ public class RedisWindowStore implements WindowStore {
         this.retention = properties.getWindowRetention();
     }
 
+    /** Agrega el evento, recorta lo viejo y renueva la expiracion en UN solo viaje de red (pipeline). */
     @Override
     public void add(NormalizedEvent event) {
-        String key = key(event.zoneId(), event.sensorType());
+        byte[] key = key(event.zoneId(), event.sensorType()).getBytes(StandardCharsets.UTF_8);
+        byte[] member = Json.write(event).getBytes(StandardCharsets.UTF_8);
         long score = event.eventTime().toEpochMilli();
-        redis.opsForZSet().add(key, Json.write(event), score);
-        redis.opsForZSet().removeRangeByScore(key, Double.NEGATIVE_INFINITY, score - retention.toMillis());
-        redis.expire(key, retention.multipliedBy(2));
+        redis.executePipelined((RedisCallback<Object>) connection -> {
+            connection.zSetCommands().zAdd(key, score, member);
+            connection.zSetCommands().zRemRangeByScore(key, Double.NEGATIVE_INFINITY, score - retention.toMillis());
+            connection.keyCommands().pExpire(key, retention.multipliedBy(2).toMillis());
+            return null;
+        });
     }
 
     @Override

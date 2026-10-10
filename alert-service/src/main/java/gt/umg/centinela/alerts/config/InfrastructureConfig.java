@@ -43,9 +43,9 @@ public class InfrastructureConfig {
     @Bean
     public KafkaAdmin.NewTopics alertServiceTopics() {
         return new KafkaAdmin.NewTopics(
-                TopicBuilder.name(Topics.NORMALIZED).partitions(6).replicas(1)
+                TopicBuilder.name(Topics.NORMALIZED).partitions(Topics.PARTITIONS).replicas(1)
                         .config("retention.ms", String.valueOf(Duration.ofHours(72).toMillis())).build(),
-                TopicBuilder.name(Topics.ALERTS).partitions(3).replicas(1)
+                TopicBuilder.name(Topics.ALERTS).partitions(Topics.ALERT_PARTITIONS).replicas(1)
                         .config("retention.ms", String.valueOf(Duration.ofDays(7).toMillis())).build(),
                 TopicBuilder.name(Topics.DLQ).partitions(1).replicas(1)
                         .config("retention.ms", String.valueOf(Duration.ofDays(7).toMillis())).build());

@@ -18,6 +18,7 @@ spring:
       grafanaPassword: ${GRAFANA_DB_PASSWORD:grafana-reader}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    client-id: ${spring.application.name}-${NODE_NAME:nodo-b}   # identifica la maquina en los grupos de consumidores
     consumer:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer

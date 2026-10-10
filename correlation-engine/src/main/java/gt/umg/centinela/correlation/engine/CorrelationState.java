@@ -41,8 +41,12 @@ public interface CorrelationState {
 
     Optional<SuspectState> suspect(String plateHash);
 
-    /** true si es la primera vez que la placa sospechosa se ve en esa zona. */
-    boolean firstSuspectSightingInZone(String plateHash, int zoneId, Duration ttl);
+    /**
+     * true si es la primera vez que el vehiculo sospechoso de ESTE incidente se ve en esa zona. Se
+     * registra por incidente (no por placa): si la misma placa participa en un incidente nuevo, su
+     * recorrido se vuelve a seguir desde cero.
+     */
+    boolean firstSuspectSightingInZone(UUID alertId, int zoneId, Duration ttl);
 
     boolean isWatchlisted(String plateHash);
 

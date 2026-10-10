@@ -40,6 +40,7 @@ public class ValidationService {
     private final ScenarioCatalog catalog;
     private final ScenarioRunner runner;
     private final RestClient alertApi;
+    private final RestClient adminApi;
     private final Map<UUID, ValidationReport> reports = new ConcurrentHashMap<>();
     private volatile UUID latest;
 
@@ -51,6 +52,11 @@ public class ValidationService {
                 .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceUser(), properties.getAlertServicePassword()))
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
                 .build();
+        this.adminApi = RestClient.builder()
+                .baseUrl(properties.getAlertServiceUrl())
+                .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceAdminUser(),
+                        properties.getAlertServiceAdminPassword()))
+                .build();
     }
 
     public record ValidationResult(String scenario, String expectedAlert, int zoneId, String minSeverity,
@@ -59,14 +65,20 @@ public class ValidationService {
     }
 
     public record ValidationReport(UUID id, String status, Instant startedAt, Instant finishedAt,
-                                   int passed, int total, List<ValidationResult> results) {
+                                   int passed, int total, String stateReset, List<ValidationResult> results) {
     }
 
     private record Pending(String scenario, ExpectedAlert expected, Instant startedAt) {
     }
 
-    public ValidationReport start() {
+    /**
+     * @param resetState si es true, antes de lanzar los escenarios limpia el estado temporal del motor
+     *                   (ventanas e incidentes abiertos) para que una corrida anterior no contamine el
+     *                   resultado: p. ej. un incidente abierto hace 3 minutos absorberia la nueva evidencia.
+     */
+    public ValidationReport start(boolean resetState) {
         UUID id = UUID.randomUUID();
+        String reset = resetState ? resetCorrelationState() : "no solicitado";
         Instant startedAt = Instant.now();
         List<Pending> pending = new ArrayList<>();
         for (ScenarioDefinition definition : catalog.all()) {
@@ -76,11 +88,24 @@ public class ValidationService {
             ScenarioExecution execution = runner.run(definition.id(), null, 1.0);
             execution.expected().forEach(e -> pending.add(new Pending(definition.id(), e, execution.startedAt())));
         }
-        ValidationReport running = new ValidationReport(id, "RUNNING", startedAt, null, 0, pending.size(), List.of());
+        ValidationReport running = new ValidationReport(id, "RUNNING", startedAt, null, 0, pending.size(), reset, List.of());
         reports.put(id, running);
         latest = id;
-        CompletableFuture.runAsync(() -> evaluate(id, startedAt, pending));
+        CompletableFuture.runAsync(() -> evaluate(id, startedAt, pending, reset));
         return running;
+    }
+
+    private String resetCorrelationState() {
+        try {
+            JsonNode result = adminApi.post().uri("/api/admin/correlation/reset").retrieve().body(JsonNode.class);
+            String summary = "ok (" + (result == null ? 0 : result.path("deletedKeys").asLong()) + " llaves eliminadas)";
+            log.info("Estado de correlacion reiniciado antes de validar: {}", summary);
+            sleep(1500); // margen para que terminen de procesarse eventos en vuelo
+            return summary;
+        } catch (Exception e) {
+            log.warn("No se pudo reiniciar el estado de correlacion: {}", e.getMessage());
+            return "fallo: " + e.getMessage();
+        }
     }
 
     public Optional<ValidationReport> find(UUID id) {
@@ -91,7 +116,7 @@ public class ValidationService {
         return latest == null ? Optional.empty() : find(latest);
     }
 
-    private void evaluate(UUID id, Instant startedAt, List<Pending> pending) {
+    private void evaluate(UUID id, Instant startedAt, List<Pending> pending, String reset) {
         Map<Pending, ValidationResult> results = new ConcurrentHashMap<>();
         int maxWait = pending.stream().mapToInt(p -> p.expected().withinSeconds()).max().orElse(60);
         Instant deadline = startedAt.plusSeconds(maxWait + 5);
@@ -111,7 +136,7 @@ public class ValidationService {
         }
         int passed = (int) ordered.stream().filter(ValidationResult::passed).count();
         String status = passed == ordered.size() ? "PASSED" : "FAILED";
-        reports.put(id, new ValidationReport(id, status, startedAt, Instant.now(), passed, ordered.size(), ordered));
+        reports.put(id, new ValidationReport(id, status, startedAt, Instant.now(), passed, ordered.size(), reset, ordered));
         log.info("Validacion {} terminada: {}/{} correlaciones esperadas encontradas", id, passed, ordered.size());
     }
 
@@ -140,8 +165,9 @@ public class ValidationService {
             if (found.ordinal() < required.ordinal()) {
                 return Optional.empty(); // aun no escala a la severidad esperada; seguir esperando
             }
-            Instant created = Instant.parse(best.path("createdAt").asText());
-            double after = Duration.between(p.startedAt(), created).toMillis() / 1000.0;
+            // updatedAt = momento en que la alerta alcanzo su severidad actual (tras escalar si aplica)
+            Instant reached = Instant.parse(best.path("updatedAt").asText());
+            double after = Duration.between(p.startedAt(), reached).toMillis() / 1000.0;
             boolean inTime = after <= p.expected().withinSeconds();
             return Optional.of(new ValidationResult(p.scenario(), p.expected().alertType(), p.expected().zoneId(),
                     p.expected().minSeverity(), inTime, found.name(), UUID.fromString(best.path("alertId").asText()),

@@ -24,22 +24,22 @@ public class RawEventListener {
         pipeline.process(SensorType.PANIC, record.value());
     }
 
-    @KafkaListener(topics = Topics.RAW_LPR, concurrency = "${ingestion.concurrency.lpr:3}")
+    @KafkaListener(topics = Topics.RAW_LPR, concurrency = "${ingestion.concurrency.lpr:6}")
     public void lpr(ConsumerRecord<String, String> record) {
         pipeline.process(SensorType.LPR, record.value());
     }
 
-    @KafkaListener(topics = Topics.RAW_SPEED, concurrency = "${ingestion.concurrency.speed:3}")
+    @KafkaListener(topics = Topics.RAW_SPEED, concurrency = "${ingestion.concurrency.speed:6}")
     public void speed(ConsumerRecord<String, String> record) {
         pipeline.process(SensorType.SPEED, record.value());
     }
 
-    @KafkaListener(topics = Topics.RAW_ACOUSTIC, concurrency = "${ingestion.concurrency.acoustic:1}")
+    @KafkaListener(topics = Topics.RAW_ACOUSTIC, concurrency = "${ingestion.concurrency.acoustic:2}")
     public void acoustic(ConsumerRecord<String, String> record) {
         pipeline.process(SensorType.ACOUSTIC, record.value());
     }
 
-    @KafkaListener(topics = Topics.RAW_CITIZEN, concurrency = "${ingestion.concurrency.citizen:1}")
+    @KafkaListener(topics = Topics.RAW_CITIZEN, concurrency = "${ingestion.concurrency.citizen:2}")
     public void citizen(ConsumerRecord<String, String> record) {
         pipeline.process(SensorType.CITIZEN_REPORT, record.value());
     }

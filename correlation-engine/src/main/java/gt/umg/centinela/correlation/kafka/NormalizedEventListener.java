@@ -31,7 +31,7 @@ public class NormalizedEventListener {
         this.metrics = metrics;
     }
 
-    @KafkaListener(topics = Topics.NORMALIZED, groupId = "correlation", concurrency = "${correlation.concurrency:3}")
+    @KafkaListener(topics = Topics.NORMALIZED, groupId = "correlation", concurrency = "${correlation.concurrency:6}")
     public void onEvent(ConsumerRecord<String, String> record) throws Exception {
         NormalizedEvent event = Json.read(record.value(), NormalizedEvent.class);
         publisher.publish(engine.onEvent(event));

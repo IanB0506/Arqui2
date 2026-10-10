@@ -1,0 +1,64 @@
+# =============================================================================
+# NODO C / D - Generacion de eventos (Windows / Linux de los alumnos)
+#   cd deploy/nodo-c && cp ../../.env.example .env
+#   Nodo C: SIMULATOR_ZONES=1,2,3,4,5,6   SIMULATOR_NODE_NAME=nodo-c
+#   Nodo D: SIMULATOR_ZONES=7,8,9,10,11,12 SIMULATOR_NODE_NAME=nodo-d
+#   docker compose up -d --build
+#
+# Para REPARTIR LA CARGA de procesamiento entre maquinas, levantar tambien los "workers":
+#   docker compose --profile workers up -d --build
+# Kafka reparte automaticamente las 6 particiones entre todas las instancias de cada grupo
+# (ingestion, correlation): no hay que configurar nada mas.
+# =============================================================================
+name: centinela-nodo-c
+
+x-java-service: &java-service
+  restart: unless-stopped
+  build: &java-build
+    context: ../..
+    dockerfile: Dockerfile
+    target: ${BUILD_TARGET:-runtime}
+  environment: &java-env
+    KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP:?Defina NODE_A_IP en .env}:9092
+    REDIS_HOST: ${NODE_A_IP}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-centinela-redis}
+    PLATE_HMAC_SECRET: ${PLATE_HMAC_SECRET:-dev-cambiar-esta-llave-en-produccion}
+    NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
+    JAVA_OPTS: -Xmx384m -XX:+ExitOnOutOfMemoryError
+
+services:
+  sensor-simulator:
+    <<: *java-service
+    build: { <<: *java-build, args: { MODULE: sensor-simulator } }
+    image: centinela/sensor-simulator:1.0.0
+    ports: ["8080:8080"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP}:9092
+      ALERT_SERVICE_URL: http://${NODE_B_IP:?Defina NODE_B_IP en .env}:8083
+      OPERATOR_USER: ${OPERATOR_USER:-operador}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operador123}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      SIMULATOR_ZONES: ${SIMULATOR_ZONES:-1,2,3,4,5,6}
+      SIMULATOR_NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
+      SIMULATOR_SPOOL_DIR: /data/spool
+      JAVA_OPTS: -Xmx256m -XX:+ExitOnOutOfMemoryError
+    volumes:
+      - simulator-spool:/data/spool
+
+  ingestion-worker:
+    <<: *java-service
+    profiles: ["workers"]
+    build: { <<: *java-build, args: { MODULE: ingestion-service } }
+    image: centinela/ingestion-service:1.0.0
+    ports: ["${WORKER_INGESTION_PORT:-8081}:8081"]
+
+  correlation-worker:
+    <<: *java-service
+    profiles: ["workers"]
+    build: { <<: *java-build, args: { MODULE: correlation-engine } }
+    image: centinela/correlation-engine:1.0.0
+    ports: ["${WORKER_CORRELATION_PORT:-8082}:8082"]
+
+volumes:
+  simulator-spool:

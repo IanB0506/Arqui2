@@ -154,7 +154,7 @@ public class AlertRepository {
                 SELECT count(*)                                                   AS total,
                        count(*) FILTER (WHERE severity = 'CRITICAL')              AS critical,
                        count(*) FILTER (WHERE severity = 'HIGH')                  AS high,
-                       count(*) FILTER (WHERE status IN ('NEW', 'ESCALATED'))     AS open,
+                       count(*) FILTER (WHERE status IN ('NEW', 'ESCALATED', 'UPDATED')) AS open,
                        count(*) FILTER (WHERE alert_type = 'POSIBLE_FALSO_POSITIVO') AS possible_false_positives,
                        count(*) FILTER (WHERE status = 'FALSE_POSITIVE')          AS validated_false_positives,
                        count(*) FILTER (WHERE status = 'CONFIRMED')               AS confirmed,

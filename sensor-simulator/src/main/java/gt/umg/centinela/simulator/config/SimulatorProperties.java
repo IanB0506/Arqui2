@@ -32,6 +32,9 @@ public class SimulatorProperties {
     private String alertServiceUrl = "http://localhost:8083";
     private String alertServiceUser = "operador";
     private String alertServicePassword = "operador123";
+    /** Credenciales de administrador: la validacion las usa para limpiar el estado de correlacion. */
+    private String alertServiceAdminUser = "admin";
+    private String alertServiceAdminPassword = "admin123";
 
     private static Map<SensorType, Double> defaultRates() {
         Map<SensorType, Double> rates = new EnumMap<>(SensorType.class);
@@ -123,6 +126,22 @@ public class SimulatorProperties {
 
     public void setAlertServiceUser(String alertServiceUser) {
         this.alertServiceUser = alertServiceUser;
+    }
+
+    public String getAlertServiceAdminUser() {
+        return alertServiceAdminUser;
+    }
+
+    public void setAlertServiceAdminUser(String alertServiceAdminUser) {
+        this.alertServiceAdminUser = alertServiceAdminUser;
+    }
+
+    public String getAlertServiceAdminPassword() {
+        return alertServiceAdminPassword;
+    }
+
+    public void setAlertServiceAdminPassword(String alertServiceAdminPassword) {
+        this.alertServiceAdminPassword = alertServiceAdminPassword;
     }
 
     public String getAlertServicePassword() {

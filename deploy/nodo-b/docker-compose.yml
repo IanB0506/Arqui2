@@ -1,0 +1,79 @@
+# =============================================================================
+# NODO B - Microservicios y visualizacion (macOS / Linux):
+#   ingestion-service, correlation-engine, alert-service, Prometheus, Grafana
+#   cd deploy/nodo-b && cp ../../.env.example .env   # editar NODE_A_IP
+#   (editar targets/generadores.json con las IP de los nodos C/D)
+#   docker compose up -d --build
+# Puertos hacia la LAN: 8083 (API/consola), 3000 (Grafana), 8081/8082 (metricas)
+# =============================================================================
+name: centinela-nodo-b
+
+x-java-service: &java-service
+  restart: unless-stopped
+  build: &java-build
+    context: ../..
+    dockerfile: Dockerfile
+    target: ${BUILD_TARGET:-runtime}
+  environment: &java-env
+    KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP:?Defina NODE_A_IP en .env}:9092
+    REDIS_HOST: ${NODE_A_IP}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-centinela-redis}
+    DB_HOST: ${NODE_A_IP}
+    DB_PASSWORD: ${DB_PASSWORD:-centinela}
+    PLATE_HMAC_SECRET: ${PLATE_HMAC_SECRET:-dev-cambiar-esta-llave-en-produccion}
+    NODE_NAME: nodo-b
+    JAVA_OPTS: -Xmx512m -XX:+ExitOnOutOfMemoryError
+
+services:
+  ingestion-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { MODULE: ingestion-service } }
+    image: centinela/ingestion-service:1.0.0
+    ports: ["8081:8081"]
+
+  correlation-engine:
+    <<: *java-service
+    build: { <<: *java-build, args: { MODULE: correlation-engine } }
+    image: centinela/correlation-engine:1.0.0
+    ports: ["8082:8082"]
+
+  alert-service:
+    <<: *java-service
+    build: { <<: *java-build, args: { MODULE: alert-service } }
+    image: centinela/alert-service:1.0.0
+    ports: ["8083:8083"]
+    environment:
+      <<: *java-env
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana-reader}
+      OPERATOR_USER: ${OPERATOR_USER:-operador}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operador123}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    ports: ["9090:9090"]
+    volumes:
+      - ../../infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./targets:/etc/prometheus/targets:ro
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/centro-de-monitoreo.json
+      TSDB_HOST: ${NODE_A_IP}:5432
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana-reader}
+      PROMETHEUS_URL: http://prometheus:9090
+    volumes:
+      - ../../infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  grafana-data:

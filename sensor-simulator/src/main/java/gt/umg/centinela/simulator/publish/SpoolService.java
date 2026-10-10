@@ -40,13 +40,16 @@ public class SpoolService {
         metrics.gauge("simulator.spool.pending", this, SpoolService::pendingCount);
     }
 
-    public synchronized void store(String topic, String key, String json) {
+    /** @return true si el evento quedo guardado en disco; false si tampoco fue posible (evento perdido). */
+    public synchronized boolean store(String topic, String key, String json) {
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, topic + "\t" + key + "\t" + json + System.lineSeparator(), StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            return true;
         } catch (IOException e) {
-            log.error("No se pudo escribir en el spool {}", file, e);
+            log.error("No se pudo escribir en el spool {}: {}", file, e.toString());
+            return false;
         }
     }
 

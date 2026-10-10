@@ -8,14 +8,14 @@ const TYPE_LABELS = {
   POSIBLE_FALSO_POSITIVO: 'Posible falso positivo', DISPOSITIVO_SOSPECHOSO: 'Dispositivo sospechoso',
   SLO_INCUMPLIDO: 'Degradacion del servicio'
 };
-const STATUS_LABELS = { NEW: 'Nueva', ESCALATED: 'Escalada', AUTO_CLASSIFIED: 'Clasificada automaticamente',
+const STATUS_LABELS = { NEW: 'Nueva', ESCALATED: 'Escalada', UPDATED: 'Actualizada (nuevo testigo)', AUTO_CLASSIFIED: 'Clasificada automaticamente',
   CONFIRMED: 'Confirmada', FALSE_POSITIVE: 'Falso positivo', EXPIRED: 'Expirada' };
 
 document.getElementById('grafana-link').href = `${location.protocol}//${location.hostname}:3000`;
 
 function matchesFilter(a) {
   switch (state.filter) {
-    case 'open': return a.status === 'NEW' || a.status === 'ESCALATED';
+    case 'open': return ['NEW', 'ESCALATED', 'UPDATED'].includes(a.status);
     case 'critical': return a.severity === 'CRITICAL';
     case 'fp': return a.alertType === 'POSIBLE_FALSO_POSITIVO' || a.status === 'FALSE_POSITIVE';
     case 'validated': return !!a.validatedBy;

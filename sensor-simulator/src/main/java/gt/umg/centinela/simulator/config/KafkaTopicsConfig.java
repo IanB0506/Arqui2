@@ -1,5 +1,6 @@
 package gt.umg.centinela.simulator.config;
 
+import gt.umg.centinela.common.Topics;
 import gt.umg.centinela.common.model.SensorType;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
@@ -10,7 +11,7 @@ import org.springframework.kafka.core.KafkaAdmin;
 import java.time.Duration;
 
 /**
- * Crea los topics crudos si no existen. 6 particiones permiten hasta 6 instancias de ingesta
+ * Crea los topics crudos si no existen. 12 particiones permiten hasta 12 hilos de ingesta
  * consumiendo en paralelo (repartidas entre varias maquinas). Retencion de 24 h: el dato crudo
  * solo se necesita hasta que la ingesta lo normaliza.
  */
@@ -23,7 +24,7 @@ public class KafkaTopicsConfig {
         int i = 0;
         for (SensorType type : SensorType.values()) {
             topics[i++] = TopicBuilder.name(type.rawTopic())
-                    .partitions(6)
+                    .partitions(Topics.PARTITIONS)
                     .replicas(1)
                     .config("retention.ms", String.valueOf(Duration.ofHours(24).toMillis()))
                     .build();

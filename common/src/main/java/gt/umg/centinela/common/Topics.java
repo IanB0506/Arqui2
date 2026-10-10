@@ -30,6 +30,14 @@ public final class Topics {
     /** Cola de mensajes muertos: eventos que no pudieron procesarse tras los reintentos. */
     public static final String DLQ = "events.dlq";
 
+    /**
+     * Particiones de los topics de alto volumen. Es el maximo de consumidores en paralelo por grupo:
+     * 12 permite, por ejemplo, 2 maquinas x 6 hilos o 4 maquinas x 3 hilos procesando a la vez.
+     */
+    public static final int PARTITIONS = 12;
+    /** Particiones del topic de alertas (bajo volumen). */
+    public static final int ALERT_PARTITIONS = 3;
+
     private Topics() {
     }
 }
