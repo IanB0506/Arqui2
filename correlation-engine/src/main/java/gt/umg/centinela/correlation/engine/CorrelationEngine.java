@@ -123,7 +123,7 @@ public class CorrelationEngine {
         if (best == null || !best.reachedThreshold()) {
             return Optional.empty();
         }
-        return openOrEscalate(best, event);
+        return openOrEscalate(best, event.eventTime());
     }
 
     private RuleMatch evaluate(RuleDefinition rule, NormalizedEvent anchor) {
@@ -158,7 +158,7 @@ public class CorrelationEngine {
      * aporta algo: sube la severidad o aparece una placa (ESCALATED), o se suma un nuevo testigo/ancla
      * (UPDATED). Evita inundar al operador con alertas repetidas sin ocultarle informacion nueva.
      */
-    private Optional<AlertEvent> openOrEscalate(RuleMatch match, NormalizedEvent trigger) {
+    private Optional<AlertEvent> openOrEscalate(RuleMatch match, Instant triggerTime) {
         RuleDefinition rule = match.rule();
         markEvidenceCorroborated(match.evidence());
         String key = rule.getIncidentScope() == RuleDefinition.IncidentScope.ANCHOR
@@ -212,7 +212,7 @@ public class CorrelationEngine {
         AlertEvent alert = new AlertEvent(alertId, revision, rule.getId(), rule.getAlertType(), severity, status,
                 match.anchor().zoneId(), match.anchor().zoneName(), match.anchor().latitude(), match.anchor().longitude(),
                 match.score(), rule.getTitle(), description, clock.instant(), match.firstEventTime(),
-                trigger.eventTime(), match.evidence(), match.plateMasked(), match.plateHash(), null);
+                triggerTime, match.evidence(), match.plateMasked(), match.plateHash(), null);
         log.info("ALERTA {} rev{} {} {} puntaje={} ({})", rule.getAlertType(), revision, severity,
                 match.anchor().zoneName(), match.score(), status);
         return Optional.of(alert);
@@ -240,7 +240,10 @@ public class CorrelationEngine {
                 }
                 RuleMatch last = evaluate(rule, anchor);
                 if (last.reachedThreshold()) {
-                    openOrEscalate(last, anchor).ifPresent(alerts::add);
+                    // corroboracion tardia: el disparador es la evidencia mas reciente, no el ancla
+                    Instant latest = last.evidence().stream().map(Evidence::eventTime)
+                            .max(Instant::compareTo).orElse(anchor.eventTime());
+                    openOrEscalate(last, latest).ifPresent(alerts::add);
                     continue;
                 }
                 alerts.add(falsePositive(rule, last));

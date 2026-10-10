@@ -3,6 +3,7 @@ package gt.umg.centinela.alerts.live;
 import gt.umg.centinela.alerts.persistence.AlertView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -26,7 +27,25 @@ public class AlertBroadcaster {
         emitter.onCompletion(() -> emitters.remove(emitter));
         emitter.onTimeout(() -> emitters.remove(emitter));
         emitter.onError(e -> emitters.remove(emitter));
+        try {
+            // Un primer mensaje envia las cabeceras: la consola sabe de inmediato que esta conectada.
+            emitter.send(SseEmitter.event().comment("conectado"));
+        } catch (IOException e) {
+            emitters.remove(emitter);
+        }
         return emitter;
+    }
+
+    /** Latido cada 20 s: mantiene viva la conexion a traves de proxies y detecta consolas caidas. */
+    @Scheduled(fixedRate = 20_000)
+    public void heartbeat() {
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event().comment("latido"));
+            } catch (IOException | IllegalStateException e) {
+                emitters.remove(emitter);
+            }
+        }
     }
 
     public void broadcast(AlertView alert) {

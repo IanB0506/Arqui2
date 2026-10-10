@@ -158,8 +158,9 @@ public class AlertRepository {
                        count(*) FILTER (WHERE alert_type = 'POSIBLE_FALSO_POSITIVO') AS possible_false_positives,
                        count(*) FILTER (WHERE status = 'FALSE_POSITIVE')          AS validated_false_positives,
                        count(*) FILTER (WHERE status = 'CONFIRMED')               AS confirmed,
-                       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)
-                           FILTER (WHERE status NOT IN ('AUTO_CLASSIFIED') AND rule_id <> 'SISTEMA') AS p95_latency_ms
+                       (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FROM alert_revisions r
+                        WHERE r.received_at >= :since AND r.status IN ('NEW', 'ESCALATED')
+                          AND r.severity IN ('HIGH', 'CRITICAL'))                 AS p95_latency_ms
                 FROM alerts WHERE updated_at >= :since
                 """, Map.of("since", Timestamp.from(since)));
     }

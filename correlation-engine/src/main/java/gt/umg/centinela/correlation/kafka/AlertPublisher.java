@@ -3,6 +3,7 @@ package gt.umg.centinela.correlation.kafka;
 import gt.umg.centinela.common.Topics;
 import gt.umg.centinela.common.json.Json;
 import gt.umg.centinela.common.model.AlertEvent;
+import gt.umg.centinela.common.model.AlertStatus;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -36,7 +37,8 @@ public class AlertPublisher {
             kafka.send(Topics.ALERTS, String.valueOf(alert.zoneId()), Json.write(alert)).get(10, TimeUnit.SECONDS);
             metrics.counter("correlation.alerts", "alert_type", alert.alertType(), "severity", alert.severity().name(),
                     "status", alert.status().name()).increment();
-            if (alert.status() != gt.umg.centinela.common.model.AlertStatus.AUTO_CLASSIFIED) {
+            // SLO: solo el primer aviso y los agravamientos (lo que el operador necesita saber ya)
+            if (alert.status() == AlertStatus.NEW || alert.status() == AlertStatus.ESCALATED) {
                 detectionLatency.record(Duration.between(alert.triggerEventTime(), alert.createdAt()));
             }
         }

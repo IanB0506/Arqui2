@@ -41,7 +41,7 @@ public class AlertStoreListener {
     public void onAlert(ConsumerRecord<String, String> record) {
         AlertEvent alert = Json.read(record.value(), AlertEvent.class);
         long latency = repository.save(alert, Instant.now());
-        if (alert.status() != AlertStatus.AUTO_CLASSIFIED) {
+        if (alert.status() == AlertStatus.NEW || alert.status() == AlertStatus.ESCALATED) {
             endToEnd.record(Duration.ofMillis(latency));
         }
         repository.findById(alert.alertId()).ifPresent(broadcaster::broadcast);

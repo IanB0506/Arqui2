@@ -290,7 +290,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)\nFROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED','UPDATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)\nFROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -551,17 +551,6 @@
                 "symbol": {
                   "mode": "fixed",
                   "fixed": "img/icons/marker/circle.svg"
-                },
-                "text": {
-                  "mode": "field",
-                  "field": "zona",
-                  "fixed": ""
-                },
-                "textConfig": {
-                  "fontSize": 10,
-                  "offsetY": -14,
-                  "textAlign": "center",
-                  "textBaseline": "middle"
                 }
               }
             },
@@ -672,7 +661,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "dateTimeAsLocal"
+                "value": "time:YYYY-MM-DD HH:mm:ss"
               },
               {
                 "id": "custom.width",
@@ -875,7 +864,7 @@
         "x": 0,
         "y": 26,
         "w": 12,
-        "h": 9
+        "h": 11
       },
       "targets": [
         {
@@ -937,7 +926,7 @@
         "x": 12,
         "y": 26,
         "w": 12,
-        "h": 9
+        "h": 11
       },
       "targets": [
         {

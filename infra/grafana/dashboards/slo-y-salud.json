@@ -38,7 +38,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT 100.0 * avg(CASE WHEN latency_ms <= 2000 THEN 1 ELSE 0 END) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED','UPDATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT 100.0 * avg(CASE WHEN latency_ms <= 2000 THEN 1 ELSE 0 END) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -108,7 +108,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED','UPDATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -178,7 +178,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED','UPDATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -248,7 +248,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED','UPDATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) FROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -942,7 +942,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "dateTimeAsLocal"
+                "value": "time:YYYY-MM-DD HH:mm:ss"
               }
             ]
           }

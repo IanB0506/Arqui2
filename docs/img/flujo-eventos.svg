@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c62828"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8d6e63"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="760" fill="#ffffff"/>
+  <text x="800" y="36" text-anchor="middle" font-size="24" font-weight="bold" fill="#263238">Flujo de eventos: de los sensores simulados a la alerta del operador</text>
+  <text x="800" y="60" text-anchor="middle" font-size="14" fill="#546e7a">Arquitectura orientada a eventos: los servicios solo se comunican a traves de Kafka</text>
+
+  <!-- sensores -->
+  <text x="40" y="100" font-size="15" font-weight="bold" fill="#2e7d32">1. Sensores (simulados)</text>
+  <g font-size="13" fill="#1b5e20">
+    <rect x="30" y="112" width="220" height="48" rx="8" fill="#e8f5e9" stroke="#43a047"/><text x="45" y="141">Botones de panico</text>
+    <rect x="30" y="170" width="220" height="48" rx="8" fill="#e8f5e9" stroke="#43a047"/><text x="45" y="199">Camaras LPR</text>
+    <rect x="30" y="228" width="220" height="48" rx="8" fill="#e8f5e9" stroke="#43a047"/><text x="45" y="257">Sensores de velocidad</text>
+    <rect x="30" y="286" width="220" height="48" rx="8" fill="#e8f5e9" stroke="#43a047"/><text x="45" y="315">Sensores acusticos</text>
+    <rect x="30" y="344" width="220" height="48" rx="8" fill="#e8f5e9" stroke="#43a047"/><text x="45" y="373">Reportes ciudadanos (app)</text>
+  </g>
+  <text x="30" y="420" font-size="12" fill="#607d8b">sensor-simulator: trafico de fondo,</text>
+  <text x="30" y="436" font-size="12" fill="#607d8b">escenarios, picos, replay CSV,</text>
+  <text x="30" y="452" font-size="12" fill="#607d8b">spool en disco (panico = perdida 0)</text>
+
+  <!-- topics crudos -->
+  <text x="300" y="100" font-size="15" font-weight="bold" fill="#1565c0">2. Kafka: topics crudos</text>
+  <rect x="290" y="112" width="230" height="280" rx="10" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <g font-size="13" fill="#0d47a1" font-family="Courier New, monospace">
+    <text x="305" y="146">sensor.panic.raw</text>
+    <text x="305" y="204">sensor.lpr.raw</text>
+    <text x="305" y="262">sensor.speed.raw</text>
+    <text x="305" y="320">sensor.acoustic.raw</text>
+    <text x="305" y="378">sensor.citizen.raw</text>
+  </g>
+  <g stroke="#37474f" stroke-width="2" marker-end="url(#a)">
+    <line x1="250" y1="136" x2="288" y2="141"/><line x1="250" y1="194" x2="288" y2="199"/>
+    <line x1="250" y1="252" x2="288" y2="257"/><line x1="250" y1="310" x2="288" y2="315"/>
+    <line x1="250" y1="368" x2="288" y2="373"/>
+  </g>
+  <text x="290" y="420" font-size="12" fill="#607d8b">un topic por tipo: aislamiento de carga</text>
+  <text x="290" y="436" font-size="12" fill="#607d8b">12 particiones, retencion 24 h</text>
+
+  <!-- ingesta -->
+  <text x="580" y="100" font-size="15" font-weight="bold" fill="#e65100">3. ingestion-service</text>
+  <rect x="570" y="112" width="240" height="280" rx="10" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <g font-size="13" fill="#bf360c">
+    <text x="585" y="145">- valida el contrato (Bean Validation)</text>
+    <text x="585" y="172">- resuelve la zona (nombre o coords.)</text>
+    <text x="585" y="199">- normaliza a NormalizedEvent</text>
+    <text x="585" y="226">- placa -&gt; HMAC + "XYZ***"</text>
+    <text x="585" y="253">- ubicacion ciudadana ~110 m</text>
+    <text x="585" y="280">- deduplica por event_id (Redis)</text>
+    <text x="585" y="307">- detecta anomalias (exceso, etc.)</text>
+    <text x="585" y="334">- modo degradado (muestreo)</text>
+    <text x="585" y="361">- REST /api/v1/panic (app movil)</text>
+  </g>
+  <line x1="520" y1="252" x2="568" y2="252" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- DLQ -->
+  <rect x="580" y="450" width="220" height="56" rx="8" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+  <text x="595" y="474" font-size="14" font-weight="bold" fill="#b71c1c" font-family="Courier New, monospace">events.dlq</text>
+  <text x="595" y="494" font-size="12" fill="#b71c1c">invalidos + causa (sin reintento)</text>
+  <line x1="690" y1="392" x2="690" y2="448" stroke="#c62828" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#r)"/>
+
+  <!-- normalized -->
+  <text x="860" y="100" font-size="15" font-weight="bold" fill="#1565c0">4. Kafka</text>
+  <rect x="855" y="200" width="200" height="104" rx="10" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <text x="870" y="232" font-size="13" font-weight="bold" fill="#0d47a1" font-family="Courier New, monospace">events.normalized</text>
+  <text x="870" y="256" font-size="12" fill="#0d47a1">llave = id de zona</text>
+  <text x="870" y="274" font-size="12" fill="#0d47a1">orden por zona garantizado</text>
+  <text x="870" y="292" font-size="12" fill="#0d47a1">retencion 72 h</text>
+  <line x1="810" y1="252" x2="853" y2="252" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- correlation -->
+  <text x="1110" y="100" font-size="15" font-weight="bold" fill="#6a1b9a">5a. correlation-engine (grupo correlation)</text>
+  <rect x="1105" y="112" width="250" height="200" rx="10" fill="#f3e5f5" stroke="#8e24aa" stroke-width="2"/>
+  <g font-size="13" fill="#4a148c">
+    <text x="1120" y="142">- filtrado temprano de irrelevantes</text>
+    <text x="1120" y="167">- ventanas por zona/tipo en Redis</text>
+    <text x="1120" y="192">- 7 reglas YAML (ancla + evidencias)</text>
+    <text x="1120" y="217">- incidentes NEW/ESCALATED/UPDATED</text>
+    <text x="1120" y="242">- falso positivo a los 90 s</text>
+    <text x="1120" y="267">- abuso de dispositivo, fuga de placa</text>
+    <text x="1120" y="292">- umbrales adaptativos por zona</text>
+  </g>
+  <path d="M1055,240 L1080,240 L1080,200 L1103,200" fill="none" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- alerts topic -->
+  <rect x="1405" y="170" width="170" height="70" rx="10" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2"/>
+  <text x="1420" y="200" font-size="13" font-weight="bold" fill="#0d47a1" font-family="Courier New, monospace">alerts</text>
+  <text x="1420" y="222" font-size="12" fill="#0d47a1">revisiones de incidentes</text>
+  <line x1="1355" y1="205" x2="1403" y2="205" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- event store path -->
+  <text x="1110" y="372" font-size="15" font-weight="bold" fill="#e65100">5b. alert-service (grupos event-store y alert-store)</text>
+  <rect x="1105" y="384" width="470" height="150" rx="10" fill="#fff3e0" stroke="#fb8c00" stroke-width="2"/>
+  <g font-size="13" fill="#bf360c">
+    <text x="1120" y="413">- guarda eventos por lotes (idempotente) en TimescaleDB</text>
+    <text x="1120" y="438">- guarda alertas (upsert por revision) y mide latencia SLO</text>
+    <text x="1120" y="463">- API REST + consola del operador en vivo (SSE)</text>
+    <text x="1120" y="488">- tareas: SLO, retencion de placas, calidad de reglas,</text>
+    <text x="1120" y="510">  lista de robados, expiracion (Spring Scheduler + ShedLock)</text>
+  </g>
+  <path d="M1055,280 L1080,280 L1080,440 L1103,440" fill="none" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+  <path d="M1490,240 L1490,382" fill="none" stroke="#37474f" stroke-width="2.5" marker-end="url(#a)"/>
+
+  <!-- data stores -->
+  <rect x="855" y="590" width="200" height="86" rx="10" fill="#eceff1" stroke="#455a64" stroke-width="2"/>
+  <text x="870" y="620" font-size="15" font-weight="bold" fill="#263238">Redis</text>
+  <text x="870" y="642" font-size="12" fill="#455a64">ventanas, incidentes, dedup,</text>
+  <text x="870" y="659" font-size="12" fill="#455a64">placas robadas, degradado</text>
+  <rect x="1105" y="590" width="220" height="86" rx="10" fill="#eceff1" stroke="#455a64" stroke-width="2"/>
+  <text x="1120" y="620" font-size="15" font-weight="bold" fill="#263238">TimescaleDB</text>
+  <text x="1120" y="642" font-size="12" fill="#455a64">hypertable + agregado continuo</text>
+  <text x="1120" y="659" font-size="12" fill="#455a64">vistas sin seudonimos</text>
+  <rect x="1355" y="590" width="220" height="86" rx="10" fill="#e8eaf6" stroke="#3949ab" stroke-width="2"/>
+  <text x="1370" y="620" font-size="15" font-weight="bold" fill="#1a237e">Operador</text>
+  <text x="1370" y="642" font-size="12" fill="#283593">Consola :8083 (valida alertas)</text>
+  <text x="1370" y="659" font-size="12" fill="#283593">Grafana :3000 (mapa, SLO)</text>
+
+  <g stroke="#8d6e63" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#g)" fill="none">
+    <path d="M690,392 L690,420 L920,420 L920,588"/>
+    <path d="M1180,312 L1180,350 L1000,350 L1000,588"/>
+    <path d="M1215,534 L1215,588"/>
+    <path d="M1465,534 L1465,588"/>
+  </g>
+  <text x="700" y="414" font-size="11" fill="#6d4c41">dedup</text>
+  <text x="1010" y="344" font-size="11" fill="#6d4c41">ventanas / estado</text>
+
+  <!-- prometheus -->
+  <rect x="30" y="590" width="760" height="86" rx="10" fill="#fbe9e7" stroke="#8d6e63" stroke-width="2"/>
+  <text x="45" y="620" font-size="15" font-weight="bold" fill="#4e342e">Observabilidad: Prometheus recolecta /actuator/prometheus de todos los servicios cada 5 s</text>
+  <text x="45" y="644" font-size="13" fill="#5d4037">throughput por sensor, lag de consumidores, latencia por etapa (histogramas), spool, modo degradado, JVM</text>
+  <text x="45" y="664" font-size="13" fill="#5d4037">Trazabilidad: el event_id viaja desde el sensor hasta la evidencia de la alerta</text>
+  <text x="800" y="725" text-anchor="middle" font-size="13" fill="#546e7a">Latencia medida evento -&gt; alerta guardada: p50 39-78 ms; p95 67 ms en el pico de diseno (270 eventos/s). Objetivo: &lt; 2 s.</text>
+</svg>

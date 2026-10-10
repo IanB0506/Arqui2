@@ -23,7 +23,8 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Monitor de SLO (ADR-008). Cada 30 s mide sobre los ultimos 5 minutos:
  * <ul>
- *   <li>SLO-1 latencia: p95 de (evento disparador -> alerta persistida) para alertas HIGH/CRITICAL &lt; 2 s.</li>
+ *   <li>SLO-1 latencia: p95 de (evento disparador -> alerta persistida) &lt; 2 s, para revisiones HIGH/CRITICAL
+ *       que el operador debe conocer de inmediato: primer aviso (NEW) y agravamientos (ESCALATED).</li>
  *   <li>SLO-3 frescura: p95 de (evento -> fila guardada en TimescaleDB) &lt; 10 s.</li>
  * </ul>
  * Si se incumple, no solo se pinta en rojo en Grafana: el sistema actua.
@@ -71,7 +72,7 @@ public class SloMonitorJob {
                        max(latency_ms) AS max,
                        avg(CASE WHEN latency_ms <= :threshold THEN 1.0 ELSE 0.0 END) AS ratio
                 FROM alert_revisions
-                WHERE received_at >= :since AND status IN ('NEW', 'ESCALATED', 'UPDATED') AND severity IN ('HIGH', 'CRITICAL')
+                WHERE received_at >= :since AND status IN ('NEW', 'ESCALATED') AND severity IN ('HIGH', 'CRITICAL')
                 """, p);
         Double freshness = jdbc.queryForObject("""
                 SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (stored_at - event_time)) * 1000)
