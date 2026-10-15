@@ -1,7 +1,10 @@
 target/
 .env
 *.log
-spool/
+# Spool en disco cuando un servicio corre fuera de Docker (en la raiz o en la carpeta del modulo).
+# Ojo: no usar "spool/" a secas, ignoraria el paquete fuente common/.../spool/.
+/spool/
+/*/spool/
 .idea/
 .vscode/
 *.iml
