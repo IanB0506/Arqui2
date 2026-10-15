@@ -29,6 +29,10 @@ public class ThresholdAdjustments implements Supplier<Map<String, Double>> {
     public void refresh() {
         try {
             Map<String, Double> latest = state.thresholdAdjustments();
+            if (latest.isEmpty() && !current.isEmpty()) {
+                // Redis volvio vacio tras reiniciarse: se conservan los ajustes hasta que alert-service los recargue
+                return;
+            }
             if (!latest.equals(current)) {
                 log.info("Ajustes de umbral actualizados: {}", latest);
             }

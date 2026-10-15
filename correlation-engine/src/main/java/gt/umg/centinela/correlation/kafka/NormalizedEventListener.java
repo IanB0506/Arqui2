@@ -32,9 +32,9 @@ public class NormalizedEventListener {
     }
 
     @KafkaListener(topics = Topics.NORMALIZED, groupId = "correlation", concurrency = "${correlation.concurrency:6}")
-    public void onEvent(ConsumerRecord<String, String> record) throws Exception {
+    public void onEvent(ConsumerRecord<String, String> record) {
         NormalizedEvent event = Json.read(record.value(), NormalizedEvent.class);
-        publisher.publish(engine.onEvent(event));
+        engine.onEvent(event, publisher::publish); // si Kafka no confirma, se lanza y el evento se reintenta
         metrics.counter("correlation.events.processed", "sensor_type", event.sensorType().name()).increment();
     }
 
@@ -42,9 +42,9 @@ public class NormalizedEventListener {
     @Scheduled(fixedDelay = 2000, initialDelay = 5000)
     public void sweepPending() {
         try {
-            publisher.publish(engine.sweepPending());
-        } catch (Exception e) {
-            log.warn("No se pudo revisar anclas pendientes: {}", e.getMessage());
+            engine.sweepPending(publisher::publish);
+        } catch (RuntimeException e) {
+            log.warn("No se pudo revisar anclas pendientes (se reintenta en la siguiente ronda): {}", e.getMessage());
         }
     }
 }

@@ -1,5 +1,6 @@
 package gt.umg.centinela.alerts.api;
 
+import gt.umg.centinela.alerts.dlq.DlqReprocessor;
 import gt.umg.centinela.alerts.jobs.AlertExpiryJob;
 import gt.umg.centinela.alerts.jobs.PlateRetentionJob;
 import gt.umg.centinela.alerts.jobs.RuleQualityJob;
@@ -12,8 +13,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
@@ -27,6 +30,8 @@ import java.util.Map;
  * <ul>
  *   <li>{@code POST /api/admin/jobs/rule-quality | slo | plate-retention | alert-expiry | watchlist}:
  *       ejecuta una tarea periodica sin esperar a su horario.</li>
+ *   <li>{@code GET /api/admin/dlq}: resumen de la cola de mensajes muertos; {@code POST /api/admin/dlq/reprocess}
+ *       la reinyecta (por defecto solo lo que fallo por errores transitorios o desconocidos).</li>
  *   <li>{@code POST /api/admin/correlation/reset}: limpia el estado temporal del motor de correlacion
  *       (ventanas, incidentes abiertos, anclas pendientes, sospechosos). Sirve para que la validacion de
  *       la demo sea reproducible. NO borra eventos ni alertas historicas de la base de datos.</li>
@@ -47,10 +52,11 @@ public class AdminController {
     private final WatchlistSyncJob watchlist;
     private final StringRedisTemplate redis;
     private final AuditRepository audit;
+    private final DlqReprocessor dlq;
 
     public AdminController(RuleQualityJob ruleQuality, SloMonitorJob slo, PlateRetentionJob retention,
                            AlertExpiryJob expiry, WatchlistSyncJob watchlist, StringRedisTemplate redis,
-                           AuditRepository audit) {
+                           AuditRepository audit, DlqReprocessor dlq) {
         this.ruleQuality = ruleQuality;
         this.slo = slo;
         this.retention = retention;
@@ -58,6 +64,22 @@ public class AdminController {
         this.watchlist = watchlist;
         this.redis = redis;
         this.audit = audit;
+        this.dlq = dlq;
+    }
+
+    @GetMapping("/dlq")
+    public Map<String, Object> dlqSummary(@RequestParam(defaultValue = "20") int ultimos) {
+        return dlq.summary(Math.min(ultimos, 200));
+    }
+
+    @PostMapping("/dlq/reprocess")
+    public Map<String, Object> dlqReprocess(@RequestParam(defaultValue = "false") boolean incluirPermanentes,
+                                            Authentication auth) {
+        DlqReprocessor.Result r = dlq.reprocess(incluirPermanentes, incluirPermanentes);
+        Map<String, Object> detail = Map.of("reprocessed", r.reprocessed(), "skipped", r.skipped(), "read", r.read(),
+                "incluirPermanentes", incluirPermanentes);
+        audit.record(auth.getName(), "REPROCESAR_DLQ", "kafka", detail);
+        return detail;
     }
 
     @PostMapping("/correlation/reset")

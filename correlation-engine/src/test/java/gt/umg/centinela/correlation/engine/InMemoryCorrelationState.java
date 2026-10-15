@@ -17,7 +17,7 @@ import java.util.UUID;
 class InMemoryCorrelationState implements CorrelationState {
 
     private final Map<String, IncidentState> incidents = new HashMap<>();
-    private final Set<UUID> corroborated = new HashSet<>();
+    final Set<UUID> corroborated = new HashSet<>();
     private final Map<String, List<Map.Entry<Instant, NormalizedEvent>>> pending = new HashMap<>();
     private final Map<String, Long> devicePanics = new HashMap<>();
     private final Set<String> flagged = new HashSet<>();
@@ -91,6 +91,23 @@ class InMemoryCorrelationState implements CorrelationState {
     @Override
     public boolean firstSuspectSightingInZone(UUID alertId, int zoneId, Duration ttl) {
         return sightings.add(alertId + ":" + zoneId);
+    }
+
+    @Override
+    public boolean suspectSeenInZone(UUID alertId, int zoneId) {
+        return sightings.contains(alertId + ":" + zoneId);
+    }
+
+    boolean backlogged;
+
+    @Override
+    public void markBacklog(Duration ttl) {
+        backlogged = true;
+    }
+
+    @Override
+    public boolean isBacklogged() {
+        return backlogged;
     }
 
     @Override

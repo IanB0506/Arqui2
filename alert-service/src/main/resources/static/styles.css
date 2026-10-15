@@ -50,3 +50,10 @@ details { margin-top: 6px; font-size: .9rem; }
 .actions .validation { color: var(--muted); font-size: .85rem; }
 .empty { color: var(--muted); text-align: center; padding: 40px; }
 @media (max-width: 600px) { header, .cards, .filters, main { padding-left: 16px; padding-right: 16px; } .time { margin-left: 0; } }
+
+/* Aviso de conexion (nodo B caido / reconectado) y alertas recibidas tarde */
+.connection { margin: 0 16px 12px; padding: 10px 14px; border-radius: 8px; font-weight: 600; }
+.connection.down { background: #fde4e5; color: #8a1c22; border: 1px solid #f2b8bb; }
+.connection.ok { background: #e3f4e8; color: #1f6b34; border: 1px solid #b7e0c3; }
+.alert.missed { outline: 3px solid #f2c14e; }
+.meta .late { background: #fff3d6; color: #7a5200; border-radius: 4px; padding: 0 6px; font-weight: 600; }

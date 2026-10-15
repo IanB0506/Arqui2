@@ -1,7 +1,9 @@
 package gt.umg.centinela.correlation.engine;
 
+import gt.umg.centinela.common.RedisKeys;
 import gt.umg.centinela.common.json.Json;
 import gt.umg.centinela.common.model.NormalizedEvent;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -27,22 +29,27 @@ import java.util.UUID;
  *   devpanic:{sensor} / devflag:{s}   contador y bandera de abuso de boton de panico
  *   suspect:{placaHash}               vehiculo sospechoso en seguimiento
  *   watchlist:plates                  set de seudonimos de placas robadas (lo carga alert-service)
+ *   watchlist:synced                  centinela: la lista esta cargada (si falta, Redis volvio vacio)
+ *   correlation:backlog               alguna instancia procesa atraso: se posponen los falsos positivos
  *   correlation:threshold-adjustments hash con ajustes de umbral por regla y zona
  * </pre>
  */
 @Component
 public class RedisCorrelationState implements CorrelationState {
 
-    public static final String WATCHLIST_KEY = "watchlist:plates";
-    public static final String ADJUSTMENTS_KEY = "correlation:threshold-adjustments";
+    public static final String WATCHLIST_KEY = RedisKeys.WATCHLIST;
+    public static final String ADJUSTMENTS_KEY = RedisKeys.THRESHOLD_ADJUSTMENTS;
 
     private static final Logger log = LoggerFactory.getLogger(RedisCorrelationState.class);
 
     private final StringRedisTemplate redis;
     private volatile Set<String> watchlist = Set.of();
+    private volatile boolean watchlistSynced;
 
-    public RedisCorrelationState(StringRedisTemplate redis) {
+    public RedisCorrelationState(StringRedisTemplate redis, MeterRegistry metrics) {
         this.redis = redis;
+        metrics.gauge("correlation.watchlist.size", this, s -> s.watchlist.size());
+        metrics.gauge("correlation.watchlist.synced", this, s -> s.watchlistSynced ? 1 : 0);
     }
 
     @Override
@@ -124,6 +131,21 @@ public class RedisCorrelationState implements CorrelationState {
         return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent("suspect-zone:" + alertId + ":" + zoneId, "1", ttl));
     }
 
+    @Override
+    public boolean suspectSeenInZone(UUID alertId, int zoneId) {
+        return Boolean.TRUE.equals(redis.hasKey("suspect-zone:" + alertId + ":" + zoneId));
+    }
+
+    @Override
+    public void markBacklog(Duration ttl) {
+        redis.opsForValue().set(RedisKeys.CORRELATION_BACKLOG, "1", ttl);
+    }
+
+    @Override
+    public boolean isBacklogged() {
+        return Boolean.TRUE.equals(redis.hasKey(RedisKeys.CORRELATION_BACKLOG));
+    }
+
     /**
      * Se consulta en cada lectura LPR (cientos por segundo), por eso se usa una copia local que se
      * refresca cada 30 s en lugar de preguntar a Redis cada vez. La lista cambia muy poco.
@@ -133,11 +155,26 @@ public class RedisCorrelationState implements CorrelationState {
         return watchlist.contains(plateHash);
     }
 
-    @Scheduled(fixedDelay = 30_000)
+    @Scheduled(fixedDelay = 15_000)
     public void refreshWatchlist() {
         try {
+            boolean synced = Boolean.TRUE.equals(redis.hasKey(RedisKeys.WATCHLIST_SYNCED));
             Set<String> members = redis.opsForSet().members(WATCHLIST_KEY);
-            watchlist = members == null ? Set.of() : Set.copyOf(members);
+            Set<String> latest = members == null ? Set.of() : Set.copyOf(members);
+            if (!synced && latest.isEmpty() && !watchlist.isEmpty()) {
+                // Redis volvio vacio (no persiste): se conserva la copia buena hasta que alert-service recargue
+                if (watchlistSynced) {
+                    log.warn("La lista de placas robadas no esta en Redis (Redis reiniciado?): se conserva la copia "
+                            + "local de {} placas hasta que alert-service la recargue", watchlist.size());
+                }
+                watchlistSynced = false;
+                return;
+            }
+            if (synced && !watchlistSynced) {
+                log.info("Lista de placas robadas sincronizada: {} placas", latest.size());
+            }
+            watchlist = latest;
+            watchlistSynced = synced;
         } catch (RuntimeException e) {
             log.warn("No se pudo refrescar la lista de placas robadas: {}", e.getMessage());
         }

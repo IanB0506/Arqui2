@@ -36,6 +36,7 @@ param(
     [double] $Velocidad = 1,
     [int] $Multiplicador = 20,
     [int] $Segundos = 60,
+    [switch] $IncluirPermanentes,
     [switch] $Pausa
 )
 
@@ -682,7 +683,7 @@ function Show-Ayuda {
     recuperar <A|B|C>    Vuelve a encender ese nodo.
     particiones          Reparto de particiones de Kafka entre las instancias (balanceo).
     dlq                  Últimos mensajes de la cola de errores (DLQ).
-    reprocesar-dlq       Reinyecta la DLQ (lo que falló por errores transitorios).
+    reprocesar-dlq [-IncluirPermanentes]   Reinyecta la DLQ (por defecto, lo que falló por errores transitorios).
     tarea <nombre>       Ejecuta una tarea periódica ya (rule-quality, slo, plate-retention, alert-expiry, watchlist).
     reiniciar-correlacion  Limpia el estado temporal del motor (pide confirmación).
 
@@ -990,10 +991,12 @@ function Invoke-Estado {
             Write-Ok ("Nodo {0} - simulador ({1}): zonas {2}, {3} ev/s, pendientes en spool: {4}" -f $letra, $g, ($st.zones -join ','), $st.expectedEventsPerSecond, $st.spoolPending)
         } catch { Write-Fallo "Nodo $letra - simulador ($g)" }
         try {
-            $v = Invoke-Api 'GET' ('http://{0}:{1}/api/vigilante' -f $ip, $cfg['SIMULATOR_PORT']) @{} 4
-            foreach ($obj in @($v.objetivos)) {
-                if ($obj.disponible) { Write-Ok ("Vigilante de {0}: {1} disponible" -f $letra, $obj.nombre) }
-                else { Write-Fallo ("Vigilante de {0}: {1} CAÍDO desde {2}" -f $letra, $obj.nombre, $obj.desde) }
+            $v = Invoke-Api 'GET' ('http://{0}:{1}/api/watchdog' -f $ip, $cfg['SIMULATOR_PORT']) @{} 4
+            $nb = $v.watchdog.nodeB
+            $texto = "Vigilante del nodo ${letra}: nodo B $($nb.state). $($nb.summary)"
+            if ($nb.state -eq 'OPERATIVO') { Write-Ok $texto } elseif ($nb.state -eq 'DESCONOCIDO') { Write-Info $texto } else { Write-Fallo $texto }
+            foreach ($g in @($v.watchdog.kafka.groups)) {
+                if ($g.condition -ne 'OK' -and $g.condition -ne 'DESCONOCIDO') { Write-Aviso ("Grupo {0}: {1}" -f $g.group, $g.message) }
             }
         } catch { }
     }
@@ -1144,6 +1147,19 @@ function Invoke-Particiones {
 
 function Invoke-Dlq {
     Assert-Docker
+    $cfg = Get-Config
+    $u = Get-Urls $cfg
+    try {
+        $r = Invoke-Api 'GET' "$($u.Consola)/api/admin/dlq?ultimos=15" (Get-AutorizacionAdmin $cfg) 60
+        Write-Titulo "Cola de mensajes muertos (events.dlq): $($r.total) mensajes"
+        foreach ($p in $r.porOrigenClaseYServicio.PSObject.Properties) { Write-Info ('{0,5}  {1}' -f $p.Value, $p.Name) }
+        if ($r.total -gt 0) { Write-Titulo 'Últimos' }
+        foreach ($m in @($r.ultimos)) { Write-Info ('{0}  {1}  {2}  {3}' -f $m.hora, $m.topicOriginal, $m.clase, $m.causa) }
+        if ($r.total -eq 0) { Write-Ok 'La DLQ está vacía.' }
+        return
+    } catch {
+        Write-Aviso 'No se pudo consultar el alert-service; se lee la DLQ directo de Kafka.'
+    }
     Write-Titulo 'Últimos mensajes de events.dlq (con sus cabeceras: tópico original y causa)'
     $salida = Invoke-Kafka @('/opt/kafka/bin/kafka-console-consumer.sh', '--topic', 'events.dlq', '--from-beginning', '--timeout-ms', '6000', '--max-messages', '20', '--property', 'print.headers=true')
     # Al agotar la espera la herramienta imprime un TimeoutException: es normal, no es un error
@@ -1154,8 +1170,11 @@ function Invoke-Dlq {
 function Invoke-ReprocesarDlq {
     $cfg = Get-Config
     $u = Get-Urls $cfg
-    $r = Invoke-Api 'POST' "$($u.Consola)/api/admin/dlq/reprocess" (Get-AutorizacionAdmin $cfg) 120
-    Write-Ok ("Reprocesados: {0}; omitidos: {1}; pendientes: {2}" -f $r.reprocessed, $r.skipped, $r.remaining)
+    $url = "$($u.Consola)/api/admin/dlq/reprocess"
+    if ($IncluirPermanentes) { $url += '?incluirPermanentes=true' }
+    $r = Invoke-Api 'POST' $url (Get-AutorizacionAdmin $cfg) 300
+    Write-Ok ("Reinyectados: {0}; omitidos: {1} (leídos {2})" -f $r.reprocessed, $r.skipped, $r.read)
+    if (-not $IncluirPermanentes -and $r.skipped -gt 0) { Write-Info 'Los PERMANENTE (mensajes mal formados) se omiten; para incluirlos: reprocesar-dlq -IncluirPermanentes' }
 }
 
 function Get-RolDatos {

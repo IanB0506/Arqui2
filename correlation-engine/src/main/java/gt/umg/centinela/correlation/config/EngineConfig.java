@@ -1,20 +1,19 @@
 package gt.umg.centinela.correlation.config;
 
 import gt.umg.centinela.common.Topics;
-import gt.umg.centinela.common.json.InvalidEventException;
+import gt.umg.centinela.common.kafka.ResilientErrorHandlers;
 import gt.umg.centinela.correlation.engine.CorrelationEngine;
 import gt.umg.centinela.correlation.engine.CorrelationState;
 import gt.umg.centinela.correlation.engine.ThresholdAdjustments;
 import gt.umg.centinela.correlation.engine.WindowStore;
-import org.apache.kafka.common.TopicPartition;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.ExponentialBackOff;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -40,18 +39,15 @@ public class EngineConfig {
     }
 
     /**
-     * Si Redis no responde, el motor reintenta con espera creciente hasta 2 minutos antes de mandar el
-     * evento a la DLQ: para correlacionar es preferible esperar a que Redis vuelva que perder eventos.
+     * Manejo de errores comun (ADR-006): si Redis o Kafka no responden, el motor reintenta SIN LIMITE con
+     * espera acotada a 30 s; para correlacionar es preferible esperar a que vuelvan que perder eventos.
+     * Un evento mal formado va directo a la DLQ y un error no clasificado, tras 4 intentos.
      */
     @Bean
-    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,
-                (record, exception) -> new TopicPartition(Topics.DLQ, -1));
-        ExponentialBackOff backOff = new ExponentialBackOff(500, 2.0);
-        backOff.setMaxInterval(10_000);
-        backOff.setMaxElapsedTime(120_000);
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
-        handler.addNotRetryableExceptions(InvalidEventException.class);
-        return handler;
+    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template, MeterRegistry metrics,
+                                            @Value("${spring.application.name}") String service) {
+        return ResilientErrorHandlers.create(template, ResilientErrorHandlers.Settings.defaults(service),
+                (topic, kind) -> metrics.counter("correlation.dlq", "error_class", kind.name()).increment(),
+                (topic, kind) -> metrics.counter("correlation.retries", "error_class", kind.name()).increment());
     }
 }

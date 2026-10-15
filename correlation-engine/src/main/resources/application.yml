@@ -6,6 +6,7 @@
 # ---------------------------------------------------------------------------
 server:
   port: 8082
+  shutdown: graceful
 
 spring:
   application:
@@ -18,20 +19,32 @@ spring:
       auto-offset-reset: latest       # al arrancar no reprocesa historia vieja: correlacion en tiempo real
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        # Si una instancia muere, Kafka reasigna sus particiones en ~10 s (antes 45 s por defecto)
+        session.timeout.ms: ${KAFKA_SESSION_TIMEOUT_MS:10000}
+        heartbeat.interval.ms: ${KAFKA_HEARTBEAT_INTERVAL_MS:3000}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
       properties:
         enable.idempotence: true
+        max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:centinela-redis}
-      timeout: 2s
+      timeout: ${REDIS_TIMEOUT:2s}
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-components: always
   endpoints:
     web:
       exposure:
@@ -46,6 +59,8 @@ correlation:
   false-positive-timeout: ${CORRELATION_FP_TIMEOUT:90s}
   incident-cooldown: 10m
   suspect-tracking: 30m
+  catch-up-threshold: 10s    # evento con mas atraso = puesta al dia tras una caida...
+  catch-up-hold: 20s         # ...mientras tanto no se clasifican falsos positivos
   device-abuse:
     max-panics: 5            # mas de 5 panicos del mismo dispositivo...
     window: 10m              # ...en 10 minutos lo marca como sospechoso

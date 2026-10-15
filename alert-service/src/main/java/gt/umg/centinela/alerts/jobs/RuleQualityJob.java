@@ -1,5 +1,6 @@
 package gt.umg.centinela.alerts.jobs;
 
+import gt.umg.centinela.common.RedisKeys;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +30,7 @@ import java.util.Map;
 public class RuleQualityJob {
 
     private static final Logger log = LoggerFactory.getLogger(RuleQualityJob.class);
-    static final String ADJUSTMENTS_KEY = "correlation:threshold-adjustments";
+    static final String ADJUSTMENTS_KEY = RedisKeys.THRESHOLD_ADJUSTMENTS;
     private static final String MISSED_SUFFIX = "/sin-corroborar";
 
     private final JdbcTemplate jdbc;
@@ -111,5 +112,22 @@ public class RuleQualityJob {
         }
         log.info("Calidad de reglas calculada para {} combinaciones regla/zona; {} ajustes de umbral activos",
                 stats.size(), adjustments.size());
+    }
+
+    /**
+     * Vuelve a publicar en Redis los ultimos ajustes calculados (tabla rule_quality), sin recalcular.
+     * Se usa cuando Redis vuelve vacio tras reiniciarse: el motor no espera hasta la proxima hora.
+     */
+    public int republishFromDatabase() {
+        Map<String, String> adjustments = new HashMap<>();
+        jdbc.query("SELECT rule_id, zone_id, threshold_adjustment FROM rule_quality WHERE threshold_adjustment <> 0",
+                rs -> {
+                    adjustments.put(rs.getString("rule_id") + ":" + rs.getInt("zone_id"),
+                            String.valueOf(rs.getDouble("threshold_adjustment")));
+                });
+        if (!adjustments.isEmpty()) {
+            redis.opsForHash().putAll(ADJUSTMENTS_KEY, adjustments);
+        }
+        return adjustments.size();
     }
 }

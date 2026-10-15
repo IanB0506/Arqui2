@@ -1,11 +1,12 @@
 package gt.umg.centinela.alerts.config;
 
 import gt.umg.centinela.common.Topics;
-import gt.umg.centinela.common.json.InvalidEventException;
+import gt.umg.centinela.common.kafka.ResilientErrorHandlers;
 import gt.umg.centinela.common.privacy.PlatePseudonymizer;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
-import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,9 +16,7 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.ExponentialBackOff;
 import org.springframework.util.backoff.FixedBackOff;
 
 import javax.sql.DataSource;
@@ -51,17 +50,17 @@ public class InfrastructureConfig {
                         .config("retention.ms", String.valueOf(Duration.ofDays(7).toMillis())).build());
     }
 
-    /** Manejo de errores de los listeners por registro (alertas): reintentos cortos y luego DLQ. */
+    /**
+     * Manejo de errores de los listeners por registro (alertas), comun a todos los servicios (ADR-006): si la
+     * base o Redis caen, se reintenta SIN LIMITE con espera acotada a 30 s; una alerta nunca termina en la
+     * DLQ por una caida, por larga que sea. Un mensaje mal formado va directo a la DLQ.
+     */
     @Bean
-    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,
-                (record, exception) -> new TopicPartition(Topics.DLQ, -1));
-        ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);
-        backOff.setMaxInterval(30_000);
-        backOff.setMaxElapsedTime(300_000);
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
-        handler.addNotRetryableExceptions(InvalidEventException.class);
-        return handler;
+    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template, MeterRegistry metrics,
+                                            @Value("${spring.application.name}") String service) {
+        return ResilientErrorHandlers.create(template, ResilientErrorHandlers.Settings.defaults(service),
+                (topic, kind) -> metrics.counter("alerts.dlq", "topic", topic, "error_class", kind.name()).increment(),
+                (topic, kind) -> metrics.counter("alerts.retries", "error_class", kind.name()).increment());
     }
 
     /**

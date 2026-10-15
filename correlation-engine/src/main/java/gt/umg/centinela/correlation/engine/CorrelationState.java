@@ -48,6 +48,14 @@ public interface CorrelationState {
      */
     boolean firstSuspectSightingInZone(UUID alertId, int zoneId, Duration ttl);
 
+    /** true si el vehiculo de ese incidente ya se aviso en esa zona (consulta sin registrar). */
+    boolean suspectSeenInZone(UUID alertId, int zoneId);
+
+    /** Avisa a todas las instancias que hay atraso en proceso (puesta al dia tras una caida). */
+    void markBacklog(Duration ttl);
+
+    boolean isBacklogged();
+
     boolean isWatchlisted(String plateHash);
 
     Map<String, Double> thresholdAdjustments();

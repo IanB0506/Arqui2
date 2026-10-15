@@ -10,8 +10,9 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Publica alertas en el topic {@code alerts} y mide la latencia de deteccion. */
 @Component
@@ -32,15 +33,24 @@ public class AlertPublisher {
                 .register(metrics);
     }
 
-    public void publish(List<AlertEvent> alerts) throws Exception {
-        for (AlertEvent alert : alerts) {
-            kafka.send(Topics.ALERTS, String.valueOf(alert.zoneId()), Json.write(alert)).get(10, TimeUnit.SECONDS);
-            metrics.counter("correlation.alerts", "alert_type", alert.alertType(), "severity", alert.severity().name(),
-                    "status", alert.status().name()).increment();
-            // SLO: solo el primer aviso y los agravamientos (lo que el operador necesita saber ya)
-            if (alert.status() == AlertStatus.NEW || alert.status() == AlertStatus.ESCALATED) {
-                detectionLatency.record(Duration.between(alert.triggerEventTime(), alert.createdAt()));
-            }
+    /**
+     * Publica una alerta y espera la confirmacion de Kafka. Si falla lanza una excepcion: el motor no
+     * guarda el estado del incidente y el evento se reintenta (ver {@link gt.umg.centinela.correlation.engine.AlertSink}).
+     */
+    public void publish(AlertEvent alert) {
+        try {
+            kafka.send(Topics.ALERTS, String.valueOf(alert.zoneId()), Json.write(alert)).get(20, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrumpido publicando la alerta " + alert.alertId(), e);
+        } catch (ExecutionException | TimeoutException | RuntimeException e) {
+            throw new IllegalStateException("No se pudo publicar la alerta " + alert.alertId(), e);
+        }
+        metrics.counter("correlation.alerts", "alert_type", alert.alertType(), "severity", alert.severity().name(),
+                "status", alert.status().name()).increment();
+        // SLO: solo el primer aviso y los agravamientos (lo que el operador necesita saber ya)
+        if (alert.status() == AlertStatus.NEW || alert.status() == AlertStatus.ESCALATED) {
+            detectionLatency.record(Duration.between(alert.triggerEventTime(), alert.createdAt()));
         }
     }
 }

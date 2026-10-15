@@ -3,6 +3,7 @@
 # ---------------------------------------------------------------------------
 server:
   port: 8083
+  shutdown: graceful
 
 spring:
   application:
@@ -25,15 +26,22 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
         max.poll.records: 500
+        # Si una instancia muere, Kafka reasigna sus particiones en ~10 s (antes 45 s por defecto)
+        session.timeout.ms: ${KAFKA_SESSION_TIMEOUT_MS:10000}
+        heartbeat.interval.ms: ${KAFKA_HEARTBEAT_INTERVAL_MS:3000}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:centinela-redis}
-      timeout: 2s
+      timeout: ${REDIS_TIMEOUT:2s}
   jackson:
     serialization:
       write-dates-as-timestamps: false
@@ -44,6 +52,8 @@ alerts:
   plate-retention: 30d
   alert-expiry: 2h
   event-store-concurrency: 2
+  console:
+    grafana-port: ${GRAFANA_PORT:3000}   # enlace "Abrir Grafana" de la consola
   slo:
     latency-threshold-ms: 2000      # "alerta generada en menos de 2 segundos desde el evento"
     target-ratio: 0.95              # ...en al menos el 95 % de los casos
@@ -56,6 +66,11 @@ alerts:
     admin-password: ${ADMIN_PASSWORD:admin123}
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true           # /actuator/health/liveness: la consola y el vigilante saben si B vive
+      show-components: always
   endpoints:
     web:
       exposure:

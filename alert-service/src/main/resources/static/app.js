@@ -1,5 +1,6 @@
 // Consola del operador: carga alertas recientes, recibe nuevas por SSE y permite validarlas.
-const state = { alerts: new Map(), filter: 'all' };
+const state = { alerts: new Map(), filter: 'all', disconnectedAt: null, missed: new Set() };
+const LATE_MS = 2000; // SLO: una alerta que tarda mas que esto llego tarde
 const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString('es-GT', { hour12: false }) : '';
 const TYPE_LABELS = {
   ROBO_EN_CURSO: 'Robo en curso', ACCIDENTE_VIAL: 'Accidente vial', DISPAROS_CONFIRMADOS: 'Disparos confirmados',
@@ -12,6 +13,9 @@ const STATUS_LABELS = { NEW: 'Nueva', ESCALATED: 'Escalada', UPDATED: 'Actualiza
   CONFIRMED: 'Confirmada', FALSE_POSITIVE: 'Falso positivo', EXPIRED: 'Expirada' };
 
 document.getElementById('grafana-link').href = `${location.protocol}//${location.hostname}:3000`;
+fetch('api/console/config').then(r => r.ok ? r.json() : null).then(c => {
+  if (c && c.grafanaPort) document.getElementById('grafana-link').href = `${location.protocol}//${location.hostname}:${c.grafanaPort}`;
+}).catch(() => {});
 
 function matchesFilter(a) {
   switch (state.filter) {
@@ -37,6 +41,7 @@ function render(freshId) {
     const node = template.content.firstElementChild.cloneNode(true);
     node.classList.add(`sev-${a.severity}`);
     if (a.alertId === freshId) node.classList.add('fresh');
+    if (state.missed.has(a.alertId)) node.classList.add('missed');
     node.querySelector('.badge').textContent = a.severity;
     node.querySelector('.title').textContent = TYPE_LABELS[a.alertType] || a.title;
     node.querySelector('.zone').textContent = a.zoneName;
@@ -46,8 +51,11 @@ function render(freshId) {
     const parts = [`Estado: ${STATUS_LABELS[a.status] || a.status}`, `Confianza: ${(a.confidence ?? 0).toFixed(2)}`,
       `Revision ${a.revision}`, `Regla ${a.ruleId}`];
     if (a.latencyMs != null) parts.push(`Latencia ${a.latencyMs} ms`);
+    if (a.latencyMs != null && a.latencyMs > LATE_MS && a.zoneId !== 0) parts.push(`LLEGO ${Math.round(a.latencyMs / 1000)} s TARDE`);
+    if (state.missed.has(a.alertId)) parts.push('Recibida al reconectar');
     if (a.plateMasked) parts.push(`Placa ${a.plateMasked}`);
-    meta.replaceChildren(...parts.map(t => Object.assign(document.createElement('span'), { textContent: t })));
+    meta.replaceChildren(...parts.map(t => Object.assign(document.createElement('span'),
+      { textContent: t, className: /TARDE|reconectar/.test(t) ? 'late' : '' })));
     const ul = node.querySelector('.evidence');
     for (const ev of (a.evidence || [])) {
       const li = document.createElement('li');
@@ -97,18 +105,64 @@ async function loadSummary() {
   document.getElementById('s-p95').textContent = s.p95_latency_ms == null ? '-' : `${Math.round(s.p95_latency_ms)} ms`;
 }
 
+// Aviso visible cuando se pierde la conexion con el servidor (nodo B caido o red cortada)
+function showConnection(text, kind) {
+  const banner = document.getElementById('connection');
+  banner.textContent = text;
+  banner.className = `connection ${kind}`;
+  banner.hidden = !text;
+}
+
+function onDisconnected() {
+  const live = document.getElementById('live');
+  live.textContent = 'Sin conexion'; live.className = 'live off';
+  if (!state.disconnectedAt) state.disconnectedAt = new Date();
+  showConnection(`Sin conexion con el servidor desde las ${fmtTime(state.disconnectedAt.toISOString())}. `
+    + 'Reintentando... Las alertas que se generen mientras tanto apareceran al reconectar.', 'down');
+}
+
+// Al reconectar: trae lo que se genero o cambio durante la desconexion y lo destaca
+async function resync() {
+  const since = new Date(state.disconnectedAt.getTime() - 60000).toISOString();
+  const res = await fetch(`api/alerts?since=${encodeURIComponent(since)}&limit=500`);
+  if (!res.ok) return;
+  let count = 0;
+  for (const a of await res.json()) {
+    const prev = state.alerts.get(a.alertId);
+    if (!prev || prev.revision !== a.revision || prev.status !== a.status) { state.missed.add(a.alertId); count++; }
+    state.alerts.set(a.alertId, a);
+  }
+  const lost = Math.round((Date.now() - state.disconnectedAt.getTime()) / 1000);
+  state.disconnectedAt = null;
+  render(); loadSummary();
+  showConnection(`Conexion restablecida tras ${lost} s: ${count} alerta(s) nuevas o actualizadas durante la desconexion `
+    + '(destacadas en la lista).', 'ok');
+  setTimeout(() => showConnection('', ''), 30000);
+}
+
 function connect() {
   const live = document.getElementById('live');
   const source = new EventSource('api/alerts/stream');
-  source.onopen = () => { live.textContent = 'En vivo'; live.className = 'live on'; };
+  source.onopen = () => {
+    live.textContent = 'En vivo'; live.className = 'live on';
+    if (state.disconnectedAt) resync();
+  };
   source.addEventListener('alert', e => {
     const a = JSON.parse(e.data);
     state.alerts.set(a.alertId, a);
     render(a.alertId);
     loadSummary();
   });
-  source.onerror = () => { live.textContent = 'Reconectando…'; live.className = 'live off'; };
+  source.onerror = onDisconnected;
 }
+
+// Si el navegador no detecta el corte (red caida sin cerrar la conexion), lo detecta este chequeo
+setInterval(async () => {
+  try {
+    const r = await fetch('actuator/health/liveness', { cache: 'no-store' });
+    if (!r.ok) throw new Error();
+  } catch (e) { onDisconnected(); }
+}, 15000);
 
 document.getElementById('filters').addEventListener('click', e => {
   if (e.target.tagName !== 'BUTTON') return;
