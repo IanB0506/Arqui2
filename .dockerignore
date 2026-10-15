@@ -4,4 +4,8 @@
 docs
 informe
 *.md
-.env
+# Secretos y archivos locales: nunca al contexto de compilación
+**/.env
+backups
+.centinela
+deploy/nodo-b/targets/generadores.json

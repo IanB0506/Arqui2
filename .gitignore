@@ -5,3 +5,9 @@ spool/
 .idea/
 .vscode/
 *.iml
+# Generado por centinela.ps1 en el nodo B a partir de GENERATOR_IPS
+deploy/nodo-b/targets/generadores.json
+# Respaldos de la base de datos (centinela.cmd respaldo / servicio db-backup)
+backups/
+# Estado local de centinela.ps1
+.centinela/

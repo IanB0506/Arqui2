@@ -1,14 +1,15 @@
 # =============================================================================
-# NODO C / D - Generacion de eventos (Windows / Linux de los alumnos)
-#   cd deploy/nodo-c && cp ../../.env.example .env
-#   Nodo C: SIMULATOR_ZONES=1,2,3,4,5,6   SIMULATOR_NODE_NAME=nodo-c
-#   Nodo D: SIMULATOR_ZONES=7,8,9,10,11,12 SIMULATOR_NODE_NAME=nodo-d
-#   docker compose up -d --build
+# NODO C / D - Generacion de eventos, vigilante de los nodos A y B, y workers opcionales
+# SO: Windows 10/11 con Docker Desktop.
 #
-# Para REPARTIR LA CARGA de procesamiento entre maquinas, levantar tambien los "workers":
-#   docker compose --profile workers up -d --build
-# Kafka reparte automaticamente las 6 particiones entre todas las instancias de cada grupo
-# (ingestion, correlation): no hay que configurar nada mas.
+#   Windows:  centinela.cmd configurar   (nodo C o D)   y luego   centinela.cmd iniciar
+#             El script reparte las zonas (C: 1-6, D: 7-12) y levanta los workers si WORKERS=true.
+#   Manual:   docker compose --env-file .env -f deploy/nodo-c/docker-compose.yml up -d
+#             Nodo D: definir SIMULATOR_ZONES=7,8,9,10,11,12 y SIMULATOR_NODE_NAME=nodo-d
+#
+# Para REPARTIR LA CARGA de procesamiento entre maquinas, levantar tambien los "workers"
+# (WORKERS=true o --profile workers). Kafka reparte automaticamente las 12 particiones entre todas
+# las instancias de cada grupo (ingestion, correlation): no hay que configurar nada mas.
 # =============================================================================
 name: centinela-nodo-c
 
@@ -19,8 +20,9 @@ x-java-service: &java-service
     dockerfile: Dockerfile
     target: ${BUILD_TARGET:-runtime}
   environment: &java-env
-    KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP:?Defina NODE_A_IP en .env}:9092
+    KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP:?Defina NODE_A_IP en .env}:${KAFKA_PORT:-9092}
     REDIS_HOST: ${NODE_A_IP}
+    REDIS_PORT: ${REDIS_PORT:-6379}
     REDIS_PASSWORD: ${REDIS_PASSWORD:-centinela-redis}
     PLATE_HMAC_SECRET: ${PLATE_HMAC_SECRET:-dev-cambiar-esta-llave-en-produccion}
     NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
@@ -31,10 +33,10 @@ services:
     <<: *java-service
     build: { <<: *java-build, args: { MODULE: sensor-simulator } }
     image: centinela/sensor-simulator:1.0.0
-    ports: ["8080:8080"]
+    ports: ["${SIMULATOR_PORT:-8080}:8080"]
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP}:9092
-      ALERT_SERVICE_URL: http://${NODE_B_IP:?Defina NODE_B_IP en .env}:8083
+      KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP}:${KAFKA_PORT:-9092}
+      ALERT_SERVICE_URL: http://${NODE_B_IP:?Defina NODE_B_IP en .env}:${ALERT_SERVICE_PORT:-8083}
       OPERATOR_USER: ${OPERATOR_USER:-operador}
       OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operador123}
       ADMIN_USER: ${ADMIN_USER:-admin}

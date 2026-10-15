@@ -1,109 +1,172 @@
 # Despliegue en varias máquinas (nodos A, B, C/D)
 
 Esta carpeta reparte Centinela Urbano entre varias computadoras del laboratorio, siguiendo la
-tabla de nodos del enunciado (sección 6). Para una sola máquina, usar el `docker-compose.yml` de la
-raíz del repositorio.
+tabla de nodos del enunciado (sección 6). Para una sola máquina, usar el modo de una sola PC
+(`centinela.cmd configurar` → opción 1, o el `docker-compose.yml` de la raíz).
 
-| Nodo | Carpeta | Qué corre | SO recomendado | RAM mínima |
+| Nodo | Carpeta | Qué corre | SO | RAM mínima |
 |---|---|---|---|---|
-| A | `nodo-a/` | Kafka (KRaft), TimescaleDB, Redis | Ubuntu Server 22.04 | 8 GB |
-| B | `nodo-b/` | ingestion-service, correlation-engine, alert-service, Prometheus, Grafana | macOS / Linux | 8 GB |
-| C | `nodo-c/` | sensor-simulator (zonas 1-6) + *workers* opcionales | Windows / Linux | 4 GB |
-| D | `nodo-c/` | sensor-simulator (zonas 7-12) + *workers* opcionales | Windows / Linux | 4 GB |
+| A | `nodo-a/` | Kafka (KRaft), TimescaleDB, Redis, respaldo automático de la base | Windows 10/11 con Docker Desktop (el enunciado recomienda Ubuntu Server 22.04) | 8 GB |
+| B | `nodo-b/` | ingestion-service, correlation-engine, alert-service, Prometheus, Grafana | Windows 10/11 con Docker Desktop (recomendado: macOS / Linux) | 8 GB |
+| C | `nodo-c/` | sensor-simulator (zonas 1-6), vigilante + *workers* opcionales | Windows 10/11 con Docker Desktop | 4 GB |
+| D | `nodo-c/` | sensor-simulator (zonas 7-12), vigilante + *workers* opcionales | Windows 10/11 con Docker Desktop | 4 GB |
 
-Todas las máquinas necesitan **Docker** (Docker Desktop en Windows/macOS) y una copia del repositorio.
+El enunciado da el sistema operativo como **recomendado**, no obligatorio. Como todo corre en
+contenedores (ADR-005), los mismos archivos funcionan en Windows, Linux o macOS. Esta guía usa
+Windows en todas las PCs: solo hace falta **Docker Desktop** y una copia del repositorio. No se
+usa bash, ni WSL a mano, ni ninguna máquina Linux (Docker Desktop administra internamente su propia
+máquina virtual).
 
-## 1. Preparar la red
+## 1. Preparar cada PC (una sola vez)
 
-1. Conectar todas las máquinas al mismo switch o red del laboratorio y anotar la IP de cada una
-   (`ip a` en Linux, `ipconfig` en Windows).
-2. Abrir en el firewall **solo** estos puertos (ver ADR-007, segmentación):
+1. Instalar **Docker Desktop** y abrirlo hasta que diga *Engine running*.
+2. Copiar el repositorio (git clone o ZIP). Conviene **fuera de OneDrive** (por ejemplo
+   `C:\dev\Arqui2`), o marcar la carpeta como "Mantener siempre en este dispositivo".
+3. Conectar todas las PCs a la misma red y comprobar que se ven (desde cmd: `ping <ip>`; si el ping
+   falla pero lo demás funciona es normal, Windows bloquea el ping por defecto).
+4. Desactivar la suspensión durante la demo: si una PC se duerme, su nodo se cae.
 
-| Destino | Puerto | Quién se conecta | Para qué |
-|---|---|---|---|
-| Nodo A | 9092 | B, C, D | Kafka |
-| Nodo A | 5432 | B | TimescaleDB |
-| Nodo A | 6379 | B, C, D | Redis |
-| Nodo B | 8083 | Operadores, C, D | API y consola del operador |
-| Nodo B | 3000 | Operadores | Grafana |
-| Nodo C/D | 8080-8082 | B | Métricas para Prometheus y control del simulador |
+Todo lo demás lo hace `centinela.cmd`, que está en la raíz del repositorio. Se ejecuta con doble
+clic (muestra un menú) o desde cmd/PowerShell con un comando (`centinela.cmd ayuda` los lista).
 
-## 2. Construir las imágenes (recomendado ANTES del día de la demo)
+## 2. Configurar (en este orden)
 
-El laboratorio puede no tener internet. Construya las imágenes en casa y llévelas en una memoria USB:
+**En la PC del nodo A** (la primera):
 
-```bash
-# en una máquina con internet, desde la raíz del repositorio
-docker compose build                       # compila con Maven dentro de Docker
-docker pull apache/kafka:3.9.1 timescale/timescaledb:2.17.2-pg16 redis:7.4-alpine \
-            grafana/grafana:11.4.0 prom/prometheus:v3.1.0
-docker save -o centinela-imagenes.tar centinela/sensor-simulator:1.0.0 centinela/ingestion-service:1.0.0 \
-  centinela/correlation-engine:1.0.0 centinela/alert-service:1.0.0 apache/kafka:3.9.1 \
-  timescale/timescaledb:2.17.2-pg16 redis:7.4-alpine grafana/grafana:11.4.0 prom/prometheus:v3.1.0
-
-# en cada máquina del laboratorio
-docker load -i centinela-imagenes.tar
+```bat
+centinela.cmd configurar
 ```
 
-## 3. Levantar los nodos (en este orden)
+- Elegir `2` (varias PCs) y escribir `A` como nodo de esta PC.
+- El script detecta la IP de la PC y pregunta las IP de B, C y D (`ipconfig` las muestra).
+- Genera una llave de seudonimización aleatoria, revisa que Windows deje usar los puertos
+  (si alguno está reservado por Hyper-V/WSL, elige otro libre) y ofrece abrir el firewall
+  (pide permiso de administrador una vez).
+- Al terminar queda un archivo **`.env`** en la raíz del repositorio.
 
-En **cada** máquina, dentro de su carpeta:
+**Copiar ese `.env` a la raíz del repositorio de las otras PCs** (USB, carpeta compartida o correo).
+Todas las PCs deben usar el **mismo** `.env`: las IP, los puertos y los secretos tienen que
+coincidir.
 
-```bash
-cp ../../.env.example .env
-# editar .env: NODE_A_IP, NODE_B_IP y los secretos (iguales en todos los nodos)
+**En cada una de las otras PCs:**
+
+```bat
+centinela.cmd configurar
 ```
 
-**Nodo A** (datos):
-```bash
-cd deploy/nodo-a && docker compose up -d --wait
+El script reconoce qué nodo es la PC comparando su IP con las del `.env` y solo lo confirma. En
+los nodos C y D reparte las zonas solo (C: 1-6, D: 7-12). En el nodo B escribe la lista de
+generadores para Prometheus.
+
+> Si en alguna PC el script tuvo que cambiar un puerto, lo avisa: hay que volver a copiar ese
+> `.env` a las demás PCs.
+
+## 3. Levantar
+
+En cada PC, **primero A, luego B, luego C y D**:
+
+```bat
+centinela.cmd iniciar
 ```
 
-**Nodo B** (servicios). Antes, editar `targets/generadores.json` con las IP de los nodos C y D:
-```bash
-cd deploy/nodo-b && docker compose up -d
+El script espera a que el nodo quede sano. En B, C y D comprueba antes que llega a Kafka del nodo
+A, y si no llega, dice si es la IP o el firewall.
+
+La primera vez se construyen las imágenes con Maven dentro de Docker (necesita internet y unos
+minutos). Si el laboratorio no tiene internet, ver la sección 6.
+
+Verificar desde cualquier PC:
+
+```bat
+centinela.cmd estado
 ```
 
-**Nodo C** (`SIMULATOR_ZONES=1,2,3,4,5,6`, `SIMULATOR_NODE_NAME=nodo-c` en `.env`):
-```bash
-cd deploy/nodo-c && docker compose up -d
-```
-
-**Nodo D**: misma carpeta `nodo-c/`, con `SIMULATOR_ZONES=7,8,9,10,11,12` y `SIMULATOR_NODE_NAME=nodo-d`.
-
-## 4. Repartir la carga de procesamiento
-
-En los nodos C y D se pueden levantar instancias adicionales de ingesta y correlación:
-
-```bash
-docker compose --profile workers up -d
-```
-
-No hay que configurar nada más: los topics tienen **12 particiones** y Kafka las reparte
-automáticamente entre todas las instancias de cada grupo de consumidores. Para comprobarlo:
-
-```bash
-# en el nodo A
-docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:9092 --describe --group correlation --members
-```
-
-La columna `CLIENT-ID` indica en qué nodo está cada consumidor (por ejemplo
-`correlation-engine-nodo-b` y `correlation-engine-nodo-c`, con 6 particiones cada uno).
-Si un worker se apaga, Kafka reasigna sus particiones a los que quedan en pocos segundos
-(probado: la alerta se generó en 188 ms con el worker caído).
-
-> Si una máquina corre a la vez el nodo B y los workers, cambie los puertos de los workers en su
-> `.env` con `WORKER_INGESTION_PORT=9081` y `WORKER_CORRELATION_PORT=9082`.
-
-## 5. Verificar
-
-```bash
-curl http://<IP_NODO_C>:8080/api/simulator/status        # el simulador genera eventos
-curl -X POST http://<IP_NODO_C>:8080/api/validation      # validación automática (≈ 2,5 min)
-curl http://<IP_NODO_C>:8080/api/validation/latest        # resultado: 9/9 esperado
-```
+Muestra los contenedores de esa PC, la salud de los tres nodos (Kafka, TimescaleDB, Redis,
+servicios, Grafana, Prometheus, simulador) y lo que ve el **vigilante** de los nodos C/D.
 
 - Consola del operador: `http://<IP_NODO_B>:8083` (operador / operador123)
 - Grafana: `http://<IP_NODO_B>:3000` (admin / admin123)
+- Vigilante: `http://<IP_NODO_C>:8080/vigilante.html`
 - Prometheus: `http://<IP_NODO_B>:9090/targets` (todos los servicios deben estar "UP")
+
+`centinela.cmd abrir` abre las tres primeras en el navegador.
+
+## 4. Repartir la carga de procesamiento
+
+Si en `configurar` se respondió que sí a los *workers*, los nodos C y D levantan también instancias
+de ingesta y de correlación. Los topics tienen **12 particiones** y Kafka las reparte solas entre
+todas las instancias de cada grupo de consumidores. Para verlo:
+
+```bat
+centinela.cmd particiones
+```
+
+La columna `CLIENT-ID` indica en qué nodo está cada consumidor (por ejemplo
+`correlation-engine-nodo-b` y `correlation-engine-nodo-c`, con 6 particiones cada uno). Si un
+worker se apaga, Kafka reasigna sus particiones a las instancias que quedan en unos segundos.
+
+## 5. Demostrar la tolerancia a fallos
+
+En la PC del nodo que se quiere tumbar:
+
+```bat
+centinela.cmd caida B
+centinela.cmd recuperar B
+```
+
+Mientras B está caído, el **vigilante** de los nodos C/D lo marca como caído (y lo registra en su
+log). Con los *workers* la detección sigue funcionando. Al volver, la consola recupera las alertas
+que se perdió y marca las que llegaron tarde. El detalle de cada caso está en
+`docs/adr/ADR-006-estrategia-de-tolerancia-a-fallos.md`.
+
+## 6. Laboratorio sin internet
+
+En una PC con internet, desde la raíz del repositorio:
+
+```bat
+centinela.cmd exportar-imagenes
+```
+
+Se genera `centinela-imagenes.tar`. Copiarlo a cada PC del laboratorio y ejecutar:
+
+```bat
+centinela.cmd importar-imagenes
+```
+
+## 7. Problemas frecuentes en Windows
+
+| Síntoma | Causa | Solución |
+|---|---|---|
+| `ports are not available ... forbidden by its access permissions` | Hyper-V/WSL reservaron ese puerto (rango excluido de Windows) | `centinela.cmd puertos -Arreglar` elige otros libres. Arreglo permanente (cmd como administrador, luego reiniciar): `netsh int ipv4 set dynamic tcp start=49152 num=16384` |
+| B o C no llegan al nodo A | Firewall del nodo A, IP equivocada, red Wi-Fi con aislamiento de clientes | `centinela.cmd firewall` en el nodo A; revisar las IP en `.env`; usar cable o la misma red |
+| Se pulsó "Cancelar" en el aviso del firewall de Docker | Windows creó una regla que bloquea a Docker Desktop | `centinela.cmd firewall` la quita y abre los puertos del nodo |
+| El nodo A se reinicia por falta de memoria | La máquina virtual de Docker tiene poca RAM | `centinela.cmd requisitos` muestra la memoria; subirla en `%UserProfile%\.wslconfig` (`[wsl2]` `memory=8GB`) y reiniciar Docker Desktop |
+| La IP de una PC cambió (DHCP) | Kafka anuncia la IP vieja | Volver a ejecutar `centinela.cmd configurar` en todas las PCs con el `.env` corregido e `iniciar` |
+| `centinela.cmd` no abre | Archivo bajado como ZIP y bloqueado | Clic derecho → Propiedades → Desbloquear, o usar git clone |
+
+## Uso manual con docker compose (sin el script)
+
+El script solo arma estos comandos. En cualquier sistema operativo, con el mismo `.env` en la raíz:
+
+```bat
+docker compose --env-file .env -f deploy/nodo-a/docker-compose.yml up -d
+docker compose --env-file .env -f deploy/nodo-b/docker-compose.yml up -d
+docker compose --env-file .env -f deploy/nodo-c/docker-compose.yml up -d
+docker compose --env-file .env -f deploy/nodo-c/docker-compose.yml --profile workers up -d
+```
+
+En el nodo B, `deploy/nodo-b/targets/generadores.json` lista las IP de los generadores para
+Prometheus (hay un ejemplo en `generadores.json.ejemplo`; el script lo genera solo). En el nodo D
+hay que definir `SIMULATOR_ZONES=7,8,9,10,11,12` y `SIMULATOR_NODE_NAME=nodo-d`.
+
+Puertos que deben quedar abiertos hacia la red local (ADR-007, segmentación):
+
+| Destino | Puerto (variable en `.env`) | Quién se conecta | Para qué |
+|---|---|---|---|
+| Nodo A | 9092 (`KAFKA_PORT`) | B, C, D | Kafka |
+| Nodo A | 5432 (`DB_PORT`) | B | TimescaleDB |
+| Nodo A | 6379 (`REDIS_PORT`) | B, C, D | Redis |
+| Nodo B | 8083 (`ALERT_SERVICE_PORT`) | Operadores, C, D | API, consola y validación |
+| Nodo B | 8081, 8082 (`INGESTION_PORT`, `CORRELATION_PORT`) | C, D | Gateway de la app y vigilante |
+| Nodo B | 3000 (`GRAFANA_PORT`), 9090 (`PROMETHEUS_PORT`) | Operadores | Grafana y Prometheus |
+| Nodo C/D | 8080 (`SIMULATOR_PORT`), 8081/8082 (`WORKER_*_PORT`) | B | Métricas para Prometheus y control del simulador |

@@ -1,9 +1,11 @@
 # =============================================================================
-# Centinela Urbano - despliegue en UNA sola maquina (desarrollo y demo rapida)
+# Centinela Urbano - despliegue en UNA sola maquina (desarrollo, demo rapida y plan B)
 #
-#   cp .env.example .env
-#   docker compose up -d --build
+#   Windows:  centinela.cmd configurar  (opcion 1)   y luego   centinela.cmd iniciar
+#   Manual:   copiar .env.example a .env y ejecutar   docker compose up -d --build
 #
+# Todos los puertos publicados se pueden cambiar en .env (SIMULATOR_PORT, INGESTION_PORT, ...),
+# por ejemplo si Windows los tiene reservados: centinela.cmd puertos -Arreglar
 # Para repartir el sistema en varias maquinas (nodos A, B, C/D) ver deploy/README.md
 # =============================================================================
 name: centinela
@@ -30,13 +32,13 @@ services:
     image: apache/kafka:3.9.1
     restart: unless-stopped
     ports:
-      - "29092:29092"   # acceso desde el host (herramientas, servicios fuera de Docker)
+      - "${KAFKA_EXTERNAL_PORT:-29092}:29092"   # acceso desde el host (herramientas, servicios fuera de Docker)
     environment:
       CLUSTER_ID: Q2VudGluZWxhVXJiYW5vMQ
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller           # modo KRaft: sin ZooKeeper
       KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-29092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -60,7 +62,7 @@ services:
     image: timescale/timescaledb:2.17.2-pg16
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: centinela
       POSTGRES_USER: centinela
@@ -84,12 +86,32 @@ services:
       redis-server --requirepass ${REDIS_PASSWORD:-centinela-redis}
       --maxmemory 256mb --maxmemory-policy volatile-ttl --save "" --appendonly no
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-centinela-redis} --no-auth-warning ping | grep PONG"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # Respaldo automático de la base (pg_dump cada BACKUP_INTERVAL_HOURS, conserva BACKUP_KEEP).
+  # Los archivos quedan en la carpeta backups/ del repositorio, visible desde Windows.
+  db-backup:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: unless-stopped
+    entrypoint: ["sh", "/scripts/respaldo.sh"]
+    command: ["ciclo"]
+    environment:
+      PGHOST: timescaledb
+      PGUSER: centinela
+      PGPASSWORD: ${DB_PASSWORD:-centinela}
+      PGDATABASE: centinela
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-6}
+      BACKUP_KEEP: ${BACKUP_KEEP:-8}
+    volumes:
+      - ./backups:/backups
+      - ./infra/backup:/scripts:ro
+    depends_on:
+      timescaledb: { condition: service_healthy }
 
   # --------------------------------------------------------- nodo B: servicios
   ingestion-service:
@@ -98,7 +120,7 @@ services:
       <<: *java-build
       args: { MODULE: ingestion-service }
     image: centinela/ingestion-service:1.0.0
-    ports: ["8081:8081"]
+    ports: ["${INGESTION_PORT:-8081}:8081"]
     depends_on:
       kafka: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -109,7 +131,7 @@ services:
       <<: *java-build
       args: { MODULE: correlation-engine }
     image: centinela/correlation-engine:1.0.0
-    ports: ["8082:8082"]
+    ports: ["${CORRELATION_PORT:-8082}:8082"]
     depends_on:
       kafka: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -120,7 +142,7 @@ services:
       <<: *java-build
       args: { MODULE: alert-service }
     image: centinela/alert-service:1.0.0
-    ports: ["8083:8083"]
+    ports: ["${ALERT_SERVICE_PORT:-8083}:8083"]
     environment:
       <<: *java-env
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana-reader}
@@ -128,6 +150,7 @@ services:
       OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operador123}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      GRAFANA_PORT: ${GRAFANA_PORT:-3000}   # solo para el enlace "Abrir Grafana" de la consola
     depends_on:
       kafka: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -137,7 +160,7 @@ services:
     image: prom/prometheus:v3.1.0
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
-    ports: ["9090:9090"]
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/targets:/etc/prometheus/targets:ro
@@ -145,7 +168,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     restart: unless-stopped
-    ports: ["3000:3000"]
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -168,7 +191,7 @@ services:
       <<: *java-build
       args: { MODULE: sensor-simulator }
     image: centinela/sensor-simulator:1.0.0
-    ports: ["8080:8080"]
+    ports: ["${SIMULATOR_PORT:-8080}:8080"]
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ALERT_SERVICE_URL: http://alert-service:8083
