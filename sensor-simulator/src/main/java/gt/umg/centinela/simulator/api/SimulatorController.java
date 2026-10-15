@@ -3,6 +3,7 @@ package gt.umg.centinela.simulator.api;
 import gt.umg.centinela.simulator.config.SimulatorProperties;
 import gt.umg.centinela.simulator.generator.BaselineGenerator;
 import gt.umg.centinela.simulator.publish.SpoolService;
+import gt.umg.centinela.simulator.watchdog.NodeWatchdog;
 import gt.umg.centinela.simulator.replay.CsvReplayService;
 import gt.umg.centinela.simulator.scenario.ScenarioCatalog;
 import gt.umg.centinela.simulator.scenario.ScenarioDefinition;
@@ -49,10 +50,11 @@ public class SimulatorController {
     private final ScenarioRunner runner;
     private final CsvReplayService replay;
     private final ValidationService validation;
+    private final NodeWatchdog watchdog;
 
     public SimulatorController(SimulatorProperties properties, BaselineGenerator baseline, SpoolService spool,
                                ScenarioCatalog catalog, ScenarioRunner runner, CsvReplayService replay,
-                               ValidationService validation) {
+                               ValidationService validation, NodeWatchdog watchdog) {
         this.properties = properties;
         this.baseline = baseline;
         this.spool = spool;
@@ -60,6 +62,7 @@ public class SimulatorController {
         this.runner = runner;
         this.replay = replay;
         this.validation = validation;
+        this.watchdog = watchdog;
     }
 
     @GetMapping("/simulator/status")
@@ -73,6 +76,8 @@ public class SimulatorController {
         status.put("expectedEventsPerSecond", Math.round(baseline.expectedEventsPerSecond() * 100) / 100.0);
         status.put("ratesPerZone", properties.getRatesPerZone());
         status.put("spoolPending", spool.pendingCount());
+        status.put("spoolTelemetryPending", spool.telemetryPending());
+        status.put("nodeB", watchdog.snapshot().nodeB().state());
         return status;
     }
 

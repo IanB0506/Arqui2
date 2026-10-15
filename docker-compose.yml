@@ -121,6 +121,13 @@ services:
       args: { MODULE: ingestion-service }
     image: centinela/ingestion-service:1.0.0
     ports: ["${INGESTION_PORT:-8081}:8081"]
+    # Spool del gateway REST de la app movil: si Kafka no responde, el evento critico queda aqui
+    environment:
+      <<: *java-env
+      INGESTION_SPOOL_DIR: /data/spool
+    volumes:
+      - ingestion-spool:/data/spool
+    stop_grace_period: 40s   # apagado ordenado: termina peticiones, sale del grupo y compacta el spool
     depends_on:
       kafka: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -201,9 +208,15 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       SIMULATOR_NODE_NAME: nodo-unico
       SIMULATOR_SPOOL_DIR: /data/spool
+      # Vigilante: revisa la salud de los servicios del "nodo B" y de Kafka
+      WATCHDOG_INGESTION_URL: http://ingestion-service:8081/actuator/health
+      WATCHDOG_CORRELATION_URL: http://correlation-engine:8082/actuator/health
+      WATCHDOG_PROMETHEUS_URL: http://prometheus:9090/-/healthy
+      WATCHDOG_GRAFANA_URL: http://grafana:3000/api/health
       JAVA_OPTS: -Xmx256m -XX:+ExitOnOutOfMemoryError
     volumes:
       - simulator-spool:/data/spool
+    stop_grace_period: 30s
     depends_on:
       kafka: { condition: service_healthy }
 
@@ -212,3 +225,4 @@ volumes:
   tsdb-data:
   grafana-data:
   simulator-spool:
+  ingestion-spool:

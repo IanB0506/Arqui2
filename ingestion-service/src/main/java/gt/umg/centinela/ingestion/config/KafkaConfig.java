@@ -1,33 +1,36 @@
 package gt.umg.centinela.ingestion.config;
 
 import gt.umg.centinela.common.Topics;
-import gt.umg.centinela.common.json.InvalidEventException;
+import gt.umg.centinela.common.kafka.ResilientErrorHandlers;
 import gt.umg.centinela.common.model.SensorType;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.ExponentialBackOff;
+import org.springframework.kafka.support.ProducerListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Topics de salida y manejo de errores de la ingesta (ADR-006 Resiliencia).
+ * Topics de salida y manejo de errores de la ingesta (ADR-006 Resiliencia), ver {@link ResilientErrorHandlers}:
  *
  * <ul>
- *   <li>Errores transitorios (Kafka o Redis momentaneamente caidos): 4 reintentos con espera
- *       exponencial 1 s, 2 s, 4 s, 8 s.</li>
+ *   <li>Errores transitorios (Kafka o Redis caidos): reintentos sin limite con espera exponencial
+ *       acotada a 30 s. Una caida, por larga que sea, no termina en la DLQ.</li>
  *   <li>Errores permanentes (JSON mal formado, campos faltantes, zona inexistente): sin reintentos,
  *       directo a la DLQ {@code events.dlq} con cabeceras que explican la causa.</li>
+ *   <li>Errores no clasificados: 4 reintentos y luego DLQ (el alert-service los reprocesa).</li>
  * </ul>
  */
 @Configuration
@@ -51,25 +54,27 @@ public class KafkaConfig {
     }
 
     @Bean
-    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,
-                (record, exception) -> {
-                    log.warn("Evento enviado a DLQ desde {}: {}", record.topic(), rootMessage(exception));
-                    // particion negativa = Kafka elige la particion de la DLQ
-                    return new TopicPartition(Topics.DLQ, -1);
-                });
-        ExponentialBackOff backOff = new ExponentialBackOff(1000, 2.0);
-        backOff.setMaxAttempts(4);
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
-        handler.addNotRetryableExceptions(InvalidEventException.class);
-        return handler;
+    public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template, ResilienceProperties r,
+                                            MeterRegistry metrics, @Value("${spring.application.name}") String service) {
+        return ResilientErrorHandlers.create(template,
+                new ResilientErrorHandlers.Settings(service, r.transientInitialInterval(), r.transientMaxInterval(),
+                        r.unknownMaxAttempts(), r.retryLogEvery()),
+                (topic, kind) -> metrics.counter("ingestion.dlq", "topic", topic, "error_class", kind.name()).increment(),
+                (topic, kind) -> metrics.counter("ingestion.retries", "error_class", kind.name()).increment());
     }
 
-    private static String rootMessage(Throwable e) {
-        Throwable t = e;
-        while (t.getCause() != null) {
-            t = t.getCause();
-        }
-        return t.getMessage();
+    /**
+     * Reemplaza al LoggingProducerListener de Spring Boot: sin payload en el log (privacidad, ADR-007) y sin
+     * una traza ERROR por cada envio fallido. La falla se informa en los reintentos y en el gateway.
+     */
+    @Bean
+    public ProducerListener<Object, Object> kafkaProducerListener(MeterRegistry metrics) {
+        return new ProducerListener<>() {
+            @Override
+            public void onError(ProducerRecord<Object, Object> record, RecordMetadata metadata, Exception exception) {
+                metrics.counter("ingestion.kafka.send.errors", "topic", record.topic()).increment();
+                log.debug("Envio fallido a {}: {}", record.topic(), exception.getMessage());
+            }
+        };
     }
 }

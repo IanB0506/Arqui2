@@ -10,8 +10,10 @@
 ## Contexto
 
 El sistema tiene 9 componentes: 4 microservicios Java, Kafka, TimescaleDB, Redis, Prometheus y
-Grafana. Se reparten entre 3 o 4 máquinas del laboratorio con sistemas operativos distintos (Ubuntu,
-macOS, Windows), según la tabla de nodos del enunciado. Para la puesta en simulación hay que
+Grafana. Se reparten entre 3 o 4 máquinas del laboratorio. La tabla de nodos del enunciado
+*recomienda* Ubuntu para el nodo A, macOS/Linux para el B y Windows/Linux para C/D, pero las
+computadoras disponibles del grupo son Windows 10/11, y el requisito del equipo es poder levantar todo
+desde Windows sin usar Linux. Para la puesta en simulación hay que
 levantarlos de forma repetible, con la misma configuración en todos los equipos, y el grupo debe
 poder repartir la carga entre varias máquinas. El enunciado pide defender tanto la adopción de
 Kubernetes como la **decisión consciente de no usarlo**.
@@ -49,7 +51,16 @@ Detalles:
   extra de ingesta y correlación; Kafka les reparte las 12 particiones. Probado: 6 particiones por nodo
   y reasignación automática al apagar uno.
 - **Llevar las imágenes al laboratorio:** se construyen antes y se transportan con
-  `docker save` / `docker load` (ver `deploy/README.md`).
+  `docker save` / `docker load` (`centinela.cmd exportar-imagenes` / `importar-imagenes`).
+- **Operación desde Windows:** `centinela.cmd` (PowerShell 5.1/7, sin bash ni WSL a mano) configura
+  cada PC (detecta la IP, reparte zonas, genera la llave HMAC), revisa los puertos que Windows reserva
+  para Hyper-V/WSL y elige otros libres, abre el firewall con una sola elevación, levanta los nodos en
+  orden esperando a que estén sanos y muestra el estado de toda la red. Los puertos publicados son
+  variables de `.env`, iguales en todas las PCs.
+- **SO de cada nodo:** como todo corre en contenedores, el mismo archivo Compose funciona en Windows
+  (Docker Desktop), Linux o macOS. Se usa Windows 10/11 en todas las PCs; el SO del enunciado es
+  recomendado, no obligatorio, y la elección no cambia la arquitectura. Docker Desktop administra
+  internamente su propia máquina virtual: el equipo no instala ni opera Linux.
 
 **¿Por qué no Kubernetes?**
 - Su principal valor, reprogramar contenedores automáticamente y escalar según la carga, rinde a
@@ -77,7 +88,10 @@ Las imágenes ya son compatibles con Kubernetes, así que la migración no exige
 - No hay reprogramación automática entre máquinas: si un nodo se apaga, sus contenedores no se
   mueven solos a otro. En la práctica se mitiga porque Kafka reasigna el trabajo de los consumidores
   a los que siguen vivos (probado).
-- La IP de los nodos se configura a mano en `.env` y en los objetivos de Prometheus.
+- Todas las PCs deben compartir el mismo `.env` (IP, puertos y secretos). El script lo genera en la
+  primera PC y detecta el rol de las demás por su IP, pero hay que copiar el archivo a mano.
+- En Windows, Docker Desktop tiene particularidades que el script cubre: puertos reservados por
+  Hyper-V/WSL (error 10013), firewall de entrada, memoria de la VM y reloj de la VM tras suspender.
 
 ## Impacto en el negocio
 

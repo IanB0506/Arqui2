@@ -1,11 +1,17 @@
 package gt.umg.centinela.simulator.config;
 
 import gt.umg.centinela.common.model.SensorType;
+import gt.umg.centinela.common.model.raw.SoundType;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.unit.DataSize;
 
+import java.time.Duration;
 import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 /** Configuracion del simulador (application.yml, prefijo {@code simulator}). */
@@ -35,6 +41,97 @@ public class SimulatorProperties {
     /** Credenciales de administrador: la validacion las usa para limpiar el estado de correlacion. */
     private String alertServiceAdminUser = "admin";
     private String alertServiceAdminPassword = "admin123";
+    /** Timeout de conexion y lectura de las llamadas al alert-service (validacion). */
+    private Duration httpTimeout = Duration.ofSeconds(10);
+    /** Spool en disco: criticos con escritura anticipada y telemetria util acotada (ADR-006). */
+    private Spool spool = new Spool();
+    /** Vigilante de los servicios del nodo B y de Kafka. */
+    private Watchdog watchdog = new Watchdog();
+
+    /** Configuracion de los dos spools en disco. */
+    public static class Spool {
+        /** Eventos por lote al reenviar. */
+        private int resendBatch = 500;
+        /** Espera maxima de las confirmaciones de un lote. */
+        private Duration resendTimeout = Duration.ofSeconds(5);
+        /** Fallas no transitorias antes de apartar un evento a .rejected (las transitorias no cuentan). */
+        private int maxAttempts = 5;
+        /** fsync de cada evento critico antes de enviarlo (escrituras agrupadas). */
+        private boolean criticalFsync = true;
+        /** Tope de criticos guardados; si se llena se rechaza lo nuevo (nunca se borra un critico). */
+        private DataSize criticalMaxSize = DataSize.ofMegabytes(32);
+        /** Sonidos acusticos que se tratan como criticos (perdida cero). */
+        private Set<SoundType> criticalSoundTypes = EnumSet.of(SoundType.DISPARO, SoundType.EXPLOSION);
+        /** Probabilidad minima para que un sonido sea critico (mismo umbral de anomalia de la ingesta). */
+        private double acousticMinProbability = 0.5;
+        /** Guarda la telemetria util cuando Kafka falla (false = se descarta, comportamiento anterior). */
+        private boolean telemetryEnabled = true;
+        /** Vencimiento de la telemetria guardada: mas vieja ya no sirve para correlacionar. */
+        private Duration telemetryMaxAge = Duration.ofMinutes(15);
+        /** Tope de telemetria guardada; si se llena se descarta lo mas viejo. */
+        private DataSize telemetryMaxSize = DataSize.ofMegabytes(32);
+        /** Exceso de velocidad util: velocidad > limite x (1 + tolerancia). */
+        private double speedTolerance = 0.3;
+        /** Ritmo maximo (eventos/s) al drenar la telemetria, para no simular una sobrecarga. */
+        private int telemetryResendRate = 500;
+
+        public int getResendBatch() { return resendBatch; }
+        public void setResendBatch(int resendBatch) { this.resendBatch = resendBatch; }
+        public Duration getResendTimeout() { return resendTimeout; }
+        public void setResendTimeout(Duration resendTimeout) { this.resendTimeout = resendTimeout; }
+        public int getMaxAttempts() { return maxAttempts; }
+        public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
+        public boolean isCriticalFsync() { return criticalFsync; }
+        public void setCriticalFsync(boolean criticalFsync) { this.criticalFsync = criticalFsync; }
+        public DataSize getCriticalMaxSize() { return criticalMaxSize; }
+        public void setCriticalMaxSize(DataSize criticalMaxSize) { this.criticalMaxSize = criticalMaxSize; }
+        public Set<SoundType> getCriticalSoundTypes() { return criticalSoundTypes; }
+        public void setCriticalSoundTypes(Set<SoundType> criticalSoundTypes) { this.criticalSoundTypes = criticalSoundTypes; }
+        public double getAcousticMinProbability() { return acousticMinProbability; }
+        public void setAcousticMinProbability(double acousticMinProbability) { this.acousticMinProbability = acousticMinProbability; }
+        public boolean isTelemetryEnabled() { return telemetryEnabled; }
+        public void setTelemetryEnabled(boolean telemetryEnabled) { this.telemetryEnabled = telemetryEnabled; }
+        public Duration getTelemetryMaxAge() { return telemetryMaxAge; }
+        public void setTelemetryMaxAge(Duration telemetryMaxAge) { this.telemetryMaxAge = telemetryMaxAge; }
+        public DataSize getTelemetryMaxSize() { return telemetryMaxSize; }
+        public void setTelemetryMaxSize(DataSize telemetryMaxSize) { this.telemetryMaxSize = telemetryMaxSize; }
+        public double getSpeedTolerance() { return speedTolerance; }
+        public void setSpeedTolerance(double speedTolerance) { this.speedTolerance = speedTolerance; }
+        public int getTelemetryResendRate() { return telemetryResendRate; }
+        public void setTelemetryResendRate(int telemetryResendRate) { this.telemetryResendRate = telemetryResendRate; }
+    }
+
+    /** Configuracion del vigilante (corre en los nodos generadores, fuera del nodo B). */
+    public static class Watchdog {
+        private boolean enabled = true;
+        /** Timeout de cada sonda HTTP y de las consultas a Kafka. */
+        private Duration timeout = Duration.ofSeconds(3);
+        /** Fallas consecutivas antes de declarar un servicio caido (evita falsas alarmas). */
+        private int failuresToDown = 2;
+        /** Servicios del nodo B a vigilar: nombre -> URL de salud. Una URL vacia desactiva el objetivo. */
+        private Map<String, String> targets = new LinkedHashMap<>();
+        /** Grupos de consumidores de los que se informan miembros, nodos y atraso (lag). */
+        private List<String> kafkaGroups = List.of("ingestion", "correlation", "event-store", "alert-store");
+        /** Atraso desde el que un grupo se marca como ATRASADO. */
+        private long lagWarn = 1000;
+        /** Transiciones que se guardan para la API y la pagina. */
+        private int historySize = 100;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration timeout) { this.timeout = timeout; }
+        public int getFailuresToDown() { return failuresToDown; }
+        public void setFailuresToDown(int failuresToDown) { this.failuresToDown = failuresToDown; }
+        public Map<String, String> getTargets() { return targets; }
+        public void setTargets(Map<String, String> targets) { this.targets = targets; }
+        public List<String> getKafkaGroups() { return kafkaGroups; }
+        public void setKafkaGroups(List<String> kafkaGroups) { this.kafkaGroups = kafkaGroups; }
+        public long getLagWarn() { return lagWarn; }
+        public void setLagWarn(long lagWarn) { this.lagWarn = lagWarn; }
+        public int getHistorySize() { return historySize; }
+        public void setHistorySize(int historySize) { this.historySize = historySize; }
+    }
 
     private static Map<SensorType, Double> defaultRates() {
         Map<SensorType, Double> rates = new EnumMap<>(SensorType.class);
@@ -142,6 +239,30 @@ public class SimulatorProperties {
 
     public void setAlertServiceAdminPassword(String alertServiceAdminPassword) {
         this.alertServiceAdminPassword = alertServiceAdminPassword;
+    }
+
+    public Duration getHttpTimeout() {
+        return httpTimeout;
+    }
+
+    public void setHttpTimeout(Duration httpTimeout) {
+        this.httpTimeout = httpTimeout;
+    }
+
+    public Spool getSpool() {
+        return spool;
+    }
+
+    public void setSpool(Spool spool) {
+        this.spool = spool;
+    }
+
+    public Watchdog getWatchdog() {
+        return watchdog;
+    }
+
+    public void setWatchdog(Watchdog watchdog) {
+        this.watchdog = watchdog;
     }
 
     public String getAlertServicePassword() {

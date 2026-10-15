@@ -36,6 +36,13 @@ services:
     build: { <<: *java-build, args: { MODULE: ingestion-service } }
     image: centinela/ingestion-service:1.0.0
     ports: ["${INGESTION_PORT:-8081}:8081"]
+    # Spool del gateway REST de la app movil: si Kafka no responde, el evento critico queda aqui
+    environment:
+      <<: *java-env
+      INGESTION_SPOOL_DIR: /data/spool
+    volumes:
+      - ingestion-spool:/data/spool
+    stop_grace_period: 40s   # apagado ordenado: termina peticiones, sale del grupo y compacta el spool
 
   correlation-engine:
     <<: *java-service
@@ -84,3 +91,4 @@ services:
 
 volumes:
   grafana-data:
+  ingestion-spool:

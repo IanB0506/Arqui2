@@ -39,6 +39,18 @@ repartidos en varias (nodos A, B y C/D).
 
 ## Arranque rápido
 
+Solo hace falta **Docker Desktop** (Windows 10/11, macOS o Linux).
+
+**Windows** (doble clic en `centinela.cmd` para ver el menú, o desde cmd/PowerShell):
+
+```bat
+centinela.cmd configurar     :: opción 1 = todo en esta PC
+centinela.cmd iniciar        :: levanta todo y espera a que esté sano
+centinela.cmd validar        :: validación automática: 9/9 correlaciones esperadas
+```
+
+**Cualquier sistema, sin el script:**
+
 ```bash
 cp .env.example .env
 docker compose up -d --build
@@ -46,10 +58,11 @@ docker compose up -d --build
 
 - Consola del operador: http://localhost:8083 (operador / operador123)
 - Grafana: http://localhost:3000 (admin / admin123)
-- Validación automática: `curl -X POST localhost:8080/api/validation` y luego
-  `curl localhost:8080/api/validation/latest`
+- Vigilante de los nodos y spool: http://localhost:8080/vigilante.html
 
-Despliegue en varias máquinas: [`deploy/README.md`](deploy/README.md).
+Si Windows no deja usar un puerto (`ports are not available ... forbidden by its access
+permissions`), `centinela.cmd puertos -Arreglar` elige otros libres. Despliegue en varias
+máquinas desde Windows: [`deploy/README.md`](deploy/README.md).
 
 ## Estructura
 
@@ -61,6 +74,7 @@ correlation-engine/  motor de correlación (reglas en application.yml)
 alert-service/       persistencia, API, consola, tareas periódicas, migraciones Flyway
 infra/               Prometheus y Grafana (datasources y dashboards como código)
 deploy/              docker compose por nodo (A datos, B servicios, C/D generadores + workers)
+centinela.cmd/.ps1   operación completa desde Windows (configurar, iniciar, estado, demo, respaldos)
 docs/                arquitectura, ADRs, correlación, manual, resultados, guía de estudio
 informe/             informe final y anexo de ADRs en Word (formato APA 7)
 ```

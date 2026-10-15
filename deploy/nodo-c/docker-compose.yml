@@ -44,9 +44,15 @@ services:
       SIMULATOR_ZONES: ${SIMULATOR_ZONES:-1,2,3,4,5,6}
       SIMULATOR_NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
       SIMULATOR_SPOOL_DIR: /data/spool
+      # Vigilante: revisa el nodo B por su IP (no los workers de esta PC, que usan otros puertos)
+      WATCHDOG_INGESTION_URL: http://${NODE_B_IP}:${INGESTION_PORT:-8081}/actuator/health
+      WATCHDOG_CORRELATION_URL: http://${NODE_B_IP}:${CORRELATION_PORT:-8082}/actuator/health
+      WATCHDOG_PROMETHEUS_URL: http://${NODE_B_IP}:${PROMETHEUS_PORT:-9090}/-/healthy
+      WATCHDOG_GRAFANA_URL: http://${NODE_B_IP}:${GRAFANA_PORT:-3000}/api/health
       JAVA_OPTS: -Xmx256m -XX:+ExitOnOutOfMemoryError
     volumes:
       - simulator-spool:/data/spool
+    stop_grace_period: 30s
 
   ingestion-worker:
     <<: *java-service
@@ -54,6 +60,12 @@ services:
     build: { <<: *java-build, args: { MODULE: ingestion-service } }
     image: centinela/ingestion-service:1.0.0
     ports: ["${WORKER_INGESTION_PORT:-8081}:8081"]
+    environment:
+      <<: *java-env
+      INGESTION_SPOOL_DIR: /data/spool
+    volumes:
+      - worker-ingestion-spool:/data/spool
+    stop_grace_period: 40s
 
   correlation-worker:
     <<: *java-service
@@ -64,3 +76,4 @@ services:
 
 volumes:
   simulator-spool:
+  worker-ingestion-spool:

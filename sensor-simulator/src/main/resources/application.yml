@@ -21,11 +21,16 @@ spring:
         linger.ms: 5                  # agrupa mensajes 5 ms para mayor throughput
         delivery.timeout.ms: 30000    # tras 30 s sin confirmacion se considera fallido -> spool
         request.timeout.ms: 10000
-        max.block.ms: 5000
+        max.block.ms: ${KAFKA_MAX_BLOCK_MS:5000}   # sin broker, send() no bloquea mas de 5 s
   task:
     scheduling:
       pool:
-        size: 4
+        size: 6                       # generador, escenarios, spool, vigilante y resumen de fallas
+      shutdown:
+        await-termination: true       # deja terminar la ronda de reenvio antes de cerrar el spool
+        await-termination-period: 10s
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
 simulator:
   node-name: ${SIMULATOR_NODE_NAME:nodo-c}
@@ -41,13 +46,41 @@ simulator:
   lpr-anomaly-probability: 0.001
   watchlist-plates: P512KLM,P777HTR,M045BBC
   spool-dir: ${SIMULATOR_SPOOL_DIR:./spool}
+  spool:                       # ADR-006: criticos con escritura anticipada, telemetria util acotada
+    critical-fsync: ${SPOOL_CRITICAL_FSYNC:true}
+    critical-max-size: ${SPOOL_CRITICAL_MAX_SIZE:32MB}
+    critical-sound-types: ${SPOOL_CRITICAL_SOUND_TYPES:DISPARO,EXPLOSION}
+    telemetry-enabled: ${SPOOL_TELEMETRY_ENABLED:true}
+    telemetry-max-age: ${SPOOL_TELEMETRY_MAX_AGE:15m}   # mas vieja ya no corrobora (ventanas de 15 min)
+    telemetry-max-size: ${SPOOL_TELEMETRY_MAX_SIZE:32MB}
+    telemetry-resend-rate: ${SPOOL_TELEMETRY_RESEND_RATE:500}  # eventos/s al drenar tras una caida
+  watchdog:                    # vigilante del nodo B y de Kafka (pagina /vigilante.html)
+    enabled: ${WATCHDOG_ENABLED:true}
+    timeout: ${WATCHDOG_TIMEOUT:3s}
+    failures-to-down: ${WATCHDOG_FAILURES_TO_DOWN:2}
+    targets:
+      ingestion: ${WATCHDOG_INGESTION_URL:http://localhost:8081/actuator/health}
+      correlation: ${WATCHDOG_CORRELATION_URL:http://localhost:8082/actuator/health}
+      alert-service: ${WATCHDOG_ALERT_SERVICE_URL:${simulator.alert-service-url}/actuator/health}
+      prometheus: ${WATCHDOG_PROMETHEUS_URL:http://localhost:9090/-/healthy}
+      grafana: ${WATCHDOG_GRAFANA_URL:http://localhost:3000/api/health}
   alert-service-url: ${ALERT_SERVICE_URL:http://localhost:8083}
   alert-service-user: ${OPERATOR_USER:operador}
   alert-service-password: ${OPERATOR_PASSWORD:operador123}
   alert-service-admin-user: ${ADMIN_USER:admin}
   alert-service-admin-password: ${ADMIN_PASSWORD:admin123}
 
+logging:
+  level:
+    # Con Kafka caido el cliente repite "Connection to node -1 could not be established" cada segundo;
+    # el vigilante ya informa la caida y la recuperacion.
+    org.apache.kafka.clients.NetworkClient: ${KAFKA_NETWORK_LOG_LEVEL:ERROR}
+
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:

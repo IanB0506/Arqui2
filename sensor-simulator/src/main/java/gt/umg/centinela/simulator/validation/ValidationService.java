@@ -11,9 +11,11 @@ import gt.umg.centinela.simulator.scenario.ScenarioRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,12 +49,18 @@ public class ValidationService {
     public ValidationService(ScenarioCatalog catalog, ScenarioRunner runner, SimulatorProperties properties) {
         this.catalog = catalog;
         this.runner = runner;
+        // Con timeouts: si el nodo B no responde, la validacion falla con un motivo claro en vez de colgarse
+        HttpClient http = HttpClient.newBuilder().connectTimeout(properties.getHttpTimeout()).build();
+        JdkClientHttpRequestFactory requests = new JdkClientHttpRequestFactory(http);
+        requests.setReadTimeout(properties.getHttpTimeout());
         this.alertApi = RestClient.builder()
+                .requestFactory(requests)
                 .baseUrl(properties.getAlertServiceUrl())
                 .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceUser(), properties.getAlertServicePassword()))
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
                 .build();
         this.adminApi = RestClient.builder()
+                .requestFactory(requests)
                 .baseUrl(properties.getAlertServiceUrl())
                 .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceAdminUser(),
                         properties.getAlertServiceAdminPassword()))

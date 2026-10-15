@@ -96,4 +96,35 @@ class EventNormalizerTest {
         assertThat(event.latitude()).isEqualTo(14.601);
         assertThat(event.attributes()).doesNotContainKey("usuario_id");
     }
+
+    private static String speedAt(Instant timestamp) {
+        return """
+                {"event_id":"11111111-2222-3333-4444-555555555555","timestamp":"%s","sensor_id":"VEL-04-1",
+                 "zona":"Zona 4","velocidad_detectada":85,"direccion":"NORTE","limite_velocidad":60}
+                """.formatted(timestamp);
+    }
+
+    @Test
+    void unEventoAtrasadoPorUnaCaidaSeAceptaSiEntroATiempoAlSistema() {
+        Instant happened = NOW.minus(Duration.ofHours(30));
+        NormalizedEvent event = normalizer.normalize(SensorType.SPEED, speedAt(happened),
+                happened.plusSeconds(60), true);
+        assertThat(event.attributes()).containsEntry(EventNormalizer.ATTR_SPOOLED, "true")
+                .containsEntry(EventNormalizer.ATTR_ORIGIN_DELAY, String.valueOf(Duration.ofHours(30).toSeconds()));
+    }
+
+    @Test
+    void unEventoQueYaEraViejoAlEntrarSeRechaza() {
+        Instant happened = NOW.minus(Duration.ofHours(30));
+        assertThatThrownBy(() -> normalizer.normalize(SensorType.SPEED, speedAt(happened), NOW.minus(Duration.ofHours(1)), false))
+                .isInstanceOf(InvalidEventException.class).hasMessageContaining("demasiado antiguo");
+    }
+
+    @Test
+    void unaReferenciaAdelantadaUsaLaHoraDeProceso() {
+        NormalizedEvent ok = normalizer.normalize(SensorType.SPEED, speedAt(NOW.minusSeconds(60)), NOW.plus(Duration.ofHours(1)), false);
+        assertThat(ok.attributes()).doesNotContainKey(EventNormalizer.ATTR_SPOOLED);
+        assertThatThrownBy(() -> normalizer.normalize(SensorType.SPEED, speedAt(NOW.plus(Duration.ofMinutes(5))), null, false))
+                .isInstanceOf(InvalidEventException.class).hasMessageContaining("futuro");
+    }
 }

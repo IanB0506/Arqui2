@@ -24,8 +24,13 @@ public class IngestionBeans {
     }
 
     @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean
     public EventNormalizer eventNormalizer(IngestionProperties properties, PlatePseudonymizer pseudonymizer,
-                                           Validator validator) {
-        return new EventNormalizer(properties, pseudonymizer, validator, Clock.systemUTC());
+                                           Validator validator, Clock clock) {
+        return new EventNormalizer(properties, pseudonymizer, validator, clock);
     }
 }

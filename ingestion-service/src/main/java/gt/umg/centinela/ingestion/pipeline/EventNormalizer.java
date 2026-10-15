@@ -20,6 +20,7 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -38,6 +39,11 @@ import java.util.stream.Collectors;
  */
 public class EventNormalizer {
 
+    /** Atributo que marca un evento reenviado desde un spool (llego tarde por una caida). */
+    public static final String ATTR_SPOOLED = "reenviado_spool";
+    /** Segundos entre que ocurrio el evento y que llego a la ingesta. */
+    public static final String ATTR_ORIGIN_DELAY = "retraso_origen_s";
+
     /** Probabilidad minima para considerar anomalo un sonido critico. */
     static final double ACOUSTIC_ANOMALY_THRESHOLD = 0.5;
 
@@ -54,13 +60,35 @@ public class EventNormalizer {
     }
 
     public NormalizedEvent normalize(SensorType type, String json) {
-        return switch (type) {
+        return normalize(type, json, null, false);
+    }
+
+    /**
+     * @param reference hora en que el evento entro al sistema (header centinela-first-attempt o el
+     *                  timestamp del mensaje en Kafka). La edad maxima se mide contra ella: lo que espero
+     *                  en Kafka o en un spool mientras un nodo estaba caido no cuenta como antiguedad.
+     * @param spooled   true si el evento se reenvio desde un spool: queda marcado en los atributos para
+     *                  que el alert-service sepa que llego tarde por una caida
+     */
+    public NormalizedEvent normalize(SensorType type, String json, Instant reference, boolean spooled) {
+        NormalizedEvent event = switch (type) {
             case PANIC -> panic(parse(json, PanicButtonEvent.class));
             case LPR -> lpr(parse(json, LprCameraEvent.class));
             case SPEED -> speed(parse(json, SpeedSensorEvent.class));
             case ACOUSTIC -> acoustic(parse(json, AcousticSensorEvent.class));
             case CITIZEN_REPORT -> citizen(parse(json, CitizenReportEvent.class));
         };
+        checkAge(event.eventTime(), reference);
+        if (!spooled) {
+            return event;
+        }
+        Map<String, String> attributes = new LinkedHashMap<>(event.attributes());
+        attributes.put(ATTR_SPOOLED, "true");
+        attributes.put(ATTR_ORIGIN_DELAY, String.valueOf(Math.max(0, Duration.between(event.eventTime(), now()).toSeconds())));
+        return new NormalizedEvent(event.eventId(), event.sensorType(), event.sensorId(), event.zoneId(), event.zoneName(),
+                event.latitude(), event.longitude(), event.eventTime(), event.ingestedAt(), event.subtype(), event.value(),
+                event.confidence(), event.anomalous(), event.plateHash(), event.plateMasked(), event.sourceHash(),
+                event.origin(), attributes);
     }
 
     /** Deserializa y valida el contrato; cualquier falla es permanente (InvalidEventException -> DLQ). */
@@ -81,7 +109,7 @@ public class EventNormalizer {
     }
 
     NormalizedEvent panic(PanicButtonEvent e) {
-        checkTime(e.timestamp());
+        checkFuture(e.timestamp());
         Zone zone = resolveZone(e.zone());
         boolean fromApp = e.userContext() != null || e.deviceId().startsWith("APP-");
         double[] point = fromApp ? generalize(pointOf(e.zone(), zone)) : pointOf(e.zone(), zone);
@@ -98,7 +126,7 @@ public class EventNormalizer {
     }
 
     NormalizedEvent lpr(LprCameraEvent e) {
-        checkTime(e.timestamp());
+        checkFuture(e.timestamp());
         Zone zone = e.location().zoneName() != null
                 ? ZoneCatalog.byName(e.location().zoneName()).orElseThrow(() -> unknownZone(e.location().zoneName()))
                 : nearestOrFail(e.location().latitude(), e.location().longitude());
@@ -115,7 +143,7 @@ public class EventNormalizer {
     }
 
     NormalizedEvent speed(SpeedSensorEvent e) {
-        checkTime(e.timestamp());
+        checkFuture(e.timestamp());
         Zone zone = ZoneCatalog.byName(e.zoneName()).orElseThrow(() -> unknownZone(e.zoneName()));
         int limit = e.speedLimit() != null ? e.speedLimit() : properties.defaultSpeedLimit();
         boolean speeding = e.speed() > threshold(limit);
@@ -130,7 +158,7 @@ public class EventNormalizer {
     }
 
     NormalizedEvent acoustic(AcousticSensorEvent e) {
-        checkTime(e.timestamp());
+        checkFuture(e.timestamp());
         Zone zone = ZoneCatalog.byName(e.zoneName()).orElseThrow(() -> unknownZone(e.zoneName()));
         boolean anomalous = e.soundType() != SoundType.RUIDO_AMBIENTAL
                 && e.criticalProbability() >= ACOUSTIC_ANOMALY_THRESHOLD;
@@ -140,7 +168,7 @@ public class EventNormalizer {
     }
 
     NormalizedEvent citizen(CitizenReportEvent e) {
-        checkTime(e.timestamp());
+        checkFuture(e.timestamp());
         Zone zone = resolveZone(e.location());
         double[] point = generalize(pointOf(e.location(), zone));
         Map<String, String> attributes = new LinkedHashMap<>();
@@ -159,13 +187,19 @@ public class EventNormalizer {
         return limit * (1 + properties.speedTolerance());
     }
 
-    private void checkTime(Instant timestamp) {
-        Instant now = now();
-        if (timestamp.isAfter(now.plus(properties.maxClockSkew()))) {
+    private void checkFuture(Instant timestamp) {
+        if (timestamp.isAfter(now().plus(properties.maxClockSkew()))) {
             throw new InvalidEventException("Timestamp en el futuro (reloj del sensor desincronizado): " + timestamp);
         }
-        if (!properties.allowHistorical() && timestamp.isBefore(now.minus(properties.maxEventAge()))) {
-            throw new InvalidEventException("Evento demasiado antiguo: " + timestamp);
+    }
+
+    private void checkAge(Instant timestamp, Instant reference) {
+        Instant now = now();
+        // La edad se mide contra el momento en que el evento entro al sistema; si ese reloj viene
+        // adelantado (o no hay referencia) se usa la hora de proceso.
+        Instant base = reference != null && reference.isBefore(now) ? reference : now;
+        if (!properties.allowHistorical() && timestamp.isBefore(base.minus(properties.maxEventAge()))) {
+            throw new InvalidEventException("Evento demasiado antiguo: " + timestamp + " (entro al sistema " + base + ")");
         }
     }
 
