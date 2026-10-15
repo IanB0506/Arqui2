@@ -40,12 +40,37 @@ final class HttpProbe {
         } catch (ConnectException e) {
             return new Observation(HealthState.DOWN, null, "conexion rechazada (la maquina responde, el servicio no)");
         } catch (HttpTimeoutException e) {
-            return new Observation(HealthState.DOWN, null, "timeout de lectura");
+            return livenessFallback(url);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new Observation(HealthState.DOWN, null, "revision interrumpida");
         } catch (Exception e) {
             return new Observation(HealthState.DOWN, null, e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * El chequeo completo de Spring espera a cada dependencia: con la base o Redis colgados puede tardar
+     * mas que el timeout aunque el proceso este sano. Antes de declararlo caido se pregunta solo si
+     * esta vivo (/actuator/health/liveness no consulta dependencias).
+     */
+    private Observation livenessFallback(String url) {
+        if (!url.endsWith("/actuator/health")) {
+            return new Observation(HealthState.DOWN, null, "timeout de lectura");
+        }
+        try {
+            HttpResponse<Void> live = client.send(HttpRequest.newBuilder(URI.create(url + "/liveness")).timeout(timeout)
+                    .GET().build(), HttpResponse.BodyHandlers.discarding());
+            if (live.statusCode() >= 200 && live.statusCode() < 300) {
+                return new Observation(HealthState.DEGRADED, null,
+                        "vivo, pero su chequeo de salud tarda mas de " + timeout.toSeconds() + " s (una dependencia no responde)");
+            }
+            return new Observation(HealthState.DOWN, null, "timeout de lectura (liveness HTTP " + live.statusCode() + ")");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Observation(HealthState.DOWN, null, "revision interrumpida");
+        } catch (Exception e) {
+            return new Observation(HealthState.DOWN, null, "timeout de lectura");
         }
     }
 

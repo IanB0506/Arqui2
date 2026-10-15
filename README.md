@@ -24,8 +24,10 @@ repartidos en varias (nodos A, B y C/D).
    zonas y detecta dispositivos abusivos.
 4. **Alerta y visualiza:** consola del operador en vivo para validar alertas, más 3 dashboards de
    Grafana (mapa de calor, SLO y salud, análisis de falsos positivos).
-5. **Se protege solo:** SLO de latencia de 2 s con degradación controlada automática, buffer en disco
-   para eventos críticos, reintentos y tareas periódicas de retención y calidad.
+5. **Se protege solo:** SLO de latencia de 2 s con degradación controlada automática; spool en disco
+   con escritura anticipada para críticos y telemetría útil; reintentos según la clase de falla y
+   reproceso de la DLQ; un **vigilante** que anuncia la caída del servidor de servicios; respaldos de
+   la base y tareas periódicas de retención y calidad.
 
 ## Resultados clave
 
@@ -33,9 +35,10 @@ repartidos en varias (nodos A, B y C/D).
 |---|---|
 | Correlaciones esperadas detectadas | **9 de 9** (en una sola máquina y en multi-nodo) |
 | Latencia evento → alerta, pico de diseño de 270 eventos/s | **p50 = 39 ms, p95 = 67 ms** (objetivo < 2 s) |
-| Eventos críticos perdidos durante una caída de Kafka | **0** |
-| Reparto de carga entre máquinas | 6 + 6 particiones; failover en segundos |
-| Pruebas automatizadas | 26 (15 del motor de correlación) |
+| Eventos críticos perdidos durante una caída del nodo A (Kafka, base y Redis) | **0** (también los de la app móvil) |
+| Caída del nodo B | Detectada por el vigilante en **16 s**; la detección sigue en el nodo C |
+| Reparto de carga entre máquinas | 6 + 6 particiones; failover en ~10 s |
+| Pruebas automatizadas | 90 (20 del motor de correlación, 34 de la librería común: diario en disco, clases de falla…) |
 
 ## Arranque rápido
 

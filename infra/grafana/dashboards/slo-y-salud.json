@@ -750,7 +750,7 @@
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Modo degradado y eventos criticos en spool",
+      "title": "Modo degradado y eventos en spool",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -780,8 +780,19 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(simulator_spool_pending)",
+          "expr": "sum(simulator_spool_pending{spool=\"critical\"})",
           "legendFormat": "Eventos criticos en spool",
+          "range": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(simulator_spool_pending{spool=\"telemetry\"})",
+          "legendFormat": "Telemetria util en spool",
           "range": true,
           "editorMode": "code"
         }

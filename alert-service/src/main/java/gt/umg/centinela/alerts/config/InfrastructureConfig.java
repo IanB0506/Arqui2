@@ -3,11 +3,13 @@ package gt.umg.centinela.alerts.config;
 import gt.umg.centinela.common.Topics;
 import gt.umg.centinela.common.kafka.ResilientErrorHandlers;
 import gt.umg.centinela.common.privacy.PlatePseudonymizer;
+import gt.umg.centinela.common.scheduling.ScheduledTaskErrorHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.provider.jdbctemplate.JdbcTemplateLockProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -76,5 +78,11 @@ public class InfrastructureConfig {
         factory.setBatchListener(true);
         factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(5000, FixedBackOff.UNLIMITED_ATTEMPTS)));
         return factory;
+    }
+
+    /** Tareas periodicas: una falla por dependencia caida se resume en una linea, sin traza (ADR-006). */
+    @Bean
+    ThreadPoolTaskSchedulerCustomizer scheduledTaskErrors() {
+        return scheduler -> scheduler.setErrorHandler(new ScheduledTaskErrorHandler());
     }
 }

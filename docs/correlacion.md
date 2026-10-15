@@ -60,7 +60,14 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
    segundos se revisan las que vencieron (90 s):
    - si ninguna alerta la usó como evidencia, se emite `POSIBLE_FALSO_POSITIVO` (severidad LOW,
      estado AUTO_CLASSIFIED);
-   - si mientras tanto llegó evidencia, se emite la alerta normal (corroboración tardía).
+   - si mientras tanto llegó evidencia, se emite la alerta normal (corroboración tardía);
+   - **excepción, puesta al día tras una caída:** si el motor está procesando eventos con más de
+     10 s de atraso (esperaron en Kafka o en un spool), no clasifica ningún falso positivo hasta 20 s
+     después del último evento atrasado, porque la evidencia que corrobora un pánico puede venir
+     detrás en la cola (ADR-006).
+9. Cada alerta tiene un **ID determinista** (derivado de la regla, la zona y el evento ancla) y se
+   publica **antes** de guardar el estado del incidente: si el proceso muere en medio, otra instancia
+   recalcula la misma alerta con el mismo ID y la base no la duplica.
 
 ## 3. Reglas configuradas
 

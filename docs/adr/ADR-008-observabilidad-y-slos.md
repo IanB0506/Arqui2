@@ -47,7 +47,16 @@ de SLO en Java** que actúa ante los incumplimientos.
 
 ### Qué ocurre cuando se incumplen
 
-El `SloMonitorJob` corre cada 30 s (ADR-004). Si SLO-1 o SLO-3 se incumplen:
+El `SloMonitorJob` corre cada 30 s (ADR-004). Si SLO-1 o SLO-3 se incumplen, primero determina la
+**causa**, porque no toda alerta tardía es una sobrecarga:
+
+| Causa | Cómo se reconoce | Qué se hace |
+|---|---|---|
+| **SOBRECARGA** | El atraso de los cuatro grupos de consumidores de Kafka es grande (≥ 1 000 mensajes) y no baja | Los pasos 1 a 5 de abajo |
+| **RECUPERACIÓN** | El atraso es bajo o va bajando: las alertas tardías son eventos que esperaron durante una caída ya superada (ADR-006) | Se registra con su causa y se avisa una vez al operador (alerta MEDIUM "Puesta al día tras una caída"). **No** se degrada: descartaría datos justo mientras el sistema se pone al día |
+
+Si el atraso no se puede medir, se usa el último minuto: si también incumple, se trata como
+sobrecarga. Ante una SOBRECARGA:
 
 1. **Degradación controlada automática:** activa la bandera `system:degraded` en Redis. La ingesta lo
    detecta en menos de 5 s y empieza a **conservar solo el 10 % de las lecturas de velocidad
@@ -55,11 +64,12 @@ El `SloMonitorJob` corre cada 30 s (ADR-004). Si SLO-1 o SLO-3 se incumplen:
    capacidad para pánicos, disparos y lecturas anómalas, que nunca se descartan.
 2. **Alerta de sistema `SLO_INCUMPLIDO`** en la consola del operador, con el detalle (p95,
    porcentaje de cumplimiento, frescura): el supervisor sabe que los tiempos no son confiables.
-3. **Registro** en `slo_measurements` para el informe de cumplimiento (panel "Incumplimientos de SLO").
+3. **Registro** en `slo_measurements`, con la causa y el atraso de Kafka, para el informe de
+   cumplimiento (panel "Incumplimientos de SLO").
 4. **Procedimiento (runbook) para el supervisor:**
    - revisar el panel de lag por servicio;
    - si el cuello de botella es la correlación o la ingesta, levantar *workers* en un nodo C/D
-     (`docker compose --profile workers up -d`), y Kafka reparte la carga solo;
+     (`WORKERS=true` en `.env` y `centinela.cmd iniciar`), y Kafka reparte la carga solo;
    - si es la base de datos, la correlación en tiempo real sigue funcionando y lo histórico se pone
      al día al recuperarse.
 5. **Recuperación:** cuando la medición vuelve a cumplir, se borra la bandera y la ingesta vuelve a
@@ -73,6 +83,7 @@ El `SloMonitorJob` corre cada 30 s (ADR-004). Si SLO-1 o SLO-3 se incumplen:
 | Pico de diseño ×20 (versión final, multi-nodo) | 270 ev/s | 39 ms | 67 ms | 80 ms | Sí |
 | Sobrecarga ×100 (primera versión, 1 nodo) | 1 350 ev/s | 37 s | 240 s | 275 s | **No**: se activó la degradación y la alerta de sistema |
 | Sobrecarga ×100 (tras optimizar el motor) | 1 350 ev/s | 70 ms | 5,0 s | 8,4 s | **No**, pero con una mejora de 50 veces; el cuello de botella pasó a la ingesta |
+| Caída del nodo B durante 90 s (puesta al día) | 13,5 ev/s | — | 90,7 s | 90,7 s | **No**, causa **RECUPERACIÓN** (atraso 0): aviso MEDIUM, sin degradar. Antes de la corrección se clasificaba como sobrecarga y activaba la degradación por error |
 
 La prueba de sobrecarga se usó como **ejercicio de capacidad**. Las métricas de lag mostraron que el
 motor de correlación era el cuello de botella. Se aplicaron dos optimizaciones: filtrar temprano los
@@ -91,8 +102,8 @@ diseño, la respuesta es escalar horizontalmente (ADR-005).
 
 **Negativas (aceptadas)**
 - No hay trazas distribuidas de tipo Jaeger: se considera suficiente el `event_id` más las métricas por etapa.
-- La medición de latencia depende de que los relojes de los nodos estén sincronizados; se exige NTP
-  en todas las máquinas.
+- La medición de latencia depende de que los relojes de los nodos estén sincronizados; se exige el
+  servicio de hora de Windows (NTP) en todas las PCs, y `centinela.cmd estado` avisa si hay desfase.
 - La degradación sacrifica detalle estadístico de tránsito (velocidades normales) mientras dura.
 
 ## Impacto en el negocio

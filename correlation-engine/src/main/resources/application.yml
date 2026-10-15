@@ -259,3 +259,12 @@ correlation:
         sensor-types: [PANIC]
         subtypes: [EMERGENCIA_MEDICA]
         weight: 1.0
+
+logging:
+  level:
+    # Con Kafka caido, cada consumidor repite "Connection to node 1 could not be established" cada
+    # segundo; el vigilante y /actuator/health ya informan la caida y la recuperacion (ADR-006).
+    org.apache.kafka.clients.NetworkClient: ${KAFKA_NETWORK_LOG_LEVEL:ERROR}
+    # El chequeo de salud de Redis escribe la traza completa en cada consulta; el estado ya se ve en
+    # /actuator/health y en el vigilante.
+    org.springframework.boot.actuate.data.redis: ERROR

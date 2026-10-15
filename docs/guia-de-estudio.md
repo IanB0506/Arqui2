@@ -19,7 +19,8 @@ elección" (sección 4).
 > debajo del objetivo de 2 segundos. Elegimos on-premise porque los datos de placas no deben salir de
 > la municipalidad y porque sale entre un 30 y un 40 % más barato que la nube a 3 años. Todo está en
 > Java con Spring Boot, se puede repartir entre varias máquinas y validamos 9 de 9 correlaciones
-> esperadas."
+> esperadas. Apagamos cada servidor a propósito: si cae el de servicios, la detección sigue en otra
+> máquina y un vigilante lo anuncia en segundos; si cae el de datos, ningún evento crítico se pierde."
 
 ---
 
@@ -64,16 +65,34 @@ elección" (sección 4).
 - **Como máximo una vez:** se puede perder, nunca duplica.
 - **Al menos una vez (el que usamos):** nunca se pierde lo aceptado, pero puede duplicar. Los
   duplicados se neutralizan con **idempotencia**:
-  - deduplicación por `event_id` en Redis;
+  - deduplicación por `event_id` en Redis, con la "ficha" de la entrega (`topic:partición:offset`):
+    el reintento del **mismo** mensaje no se descarta, otro envío del mismo evento sí;
   - `ON CONFLICT DO NOTHING` en la base;
-  - *upsert* de alertas por revisión.
+  - *upsert* de alertas por revisión, con **ID determinista**: si el motor muere a mitad de una
+    alerta y otra instancia la recalcula, sale con el mismo ID y no se duplica.
 - **Idempotente:** hacer la operación dos veces da el mismo resultado que hacerla una vez.
+
+### Escritura anticipada (*write-ahead*)
+- Primero se escribe en disco y **después** se envía; al confirmar Kafka, se marca como hecho. Así un
+  evento crítico nunca vive solo en la memoria de un proceso: si el proceso muere o se va la luz, al
+  arrancar se relee el diario y se reenvía lo pendiente.
+- Es la misma idea que usan las bases de datos (WAL) para no perder transacciones.
+
+### Monitor del monitor (vigilante)
+- Si se cae el servidor que muestra las alertas, nadie lo ve en la consola, porque la consola es lo
+  que se cayó. Por eso el vigilante corre **en otra máquina** (nodo C): revisa cada 10 s al nodo B y a
+  Kafka y dice qué cayó y dónde sigue funcionando la detección.
 
 ### DLQ (Dead Letter Queue, cola de mensajes muertos)
 - Un mensaje que **nunca** se podrá procesar, como un JSON roto, no debe reintentarse para siempre ni
   bloquear a los demás ("mensaje veneno"). Va a `events.dlq` con su causa para revisarlo después.
-- **Error permanente** (inválido): directo a la DLQ. **Error transitorio** (Redis caído): se reintenta
-  con espera exponencial.
+- Se clasifica cada falla:
+  - **permanente** (inválido): directo a la DLQ;
+  - **transitoria** (Redis, la base o Kafka no responden): se reintenta **sin límite** con espera
+    exponencial de 1 s a 30 s; el mensaje espera en Kafka, no va a la DLQ;
+  - **desconocida**: 4 reintentos y luego a la DLQ.
+- Una tarea cada 5 minutos **reprocesa** la DLQ: reinyecta lo que falló por causas pasajeras (hasta 3
+  veces). Lo permanente solo a pedido de un administrador, tras corregir la causa.
 
 ### Seudonimización vs anonimización vs cifrado
 - **Cifrado:** reversible con la llave.
@@ -106,6 +125,8 @@ elección" (sección 4).
 ### Degradación controlada
 - Ante sobrecarga, sacrificar lo menos importante (detalle estadístico de tránsito) para proteger lo
   crítico (pánicos, disparos). Es mejor que colapsar de forma pareja.
+- Hay que saber **cuándo no** degradar: tras una caída, las alertas llegan tarde aunque no haya
+  sobrecarga. Degradar ahí descartaría datos justo durante la puesta al día.
 
 ### Gobernanza de datos críticos
 - Saber **qué datos hay, quién los ve, cuánto tiempo se guardan y cómo se audita**:
@@ -124,21 +145,28 @@ elección" (sección 4).
 | Seudonimización HMAC | `common/.../privacy/PlatePseudonymizer.java` |
 | Zonas y coordenadas | `common/.../geo/ZoneCatalog.java` |
 | Escenarios (tabla 2.4, etc.) | `sensor-simulator/.../scenario/ScenarioCatalog.java` |
-| Spool de eventos críticos | `sensor-simulator/.../publish/SpoolService.java` |
+| Diario *write-ahead* en disco | `common/.../spool/DiskSpool.java` |
+| Qué se guarda si cae Kafka (crítico, telemetría útil, descarte) | `sensor-simulator/.../publish/SpoolPolicy.java` y `SpoolService.java` |
+| Gateway de la app con spool (202 `EN_COLA`) | `ingestion-service/.../api/GatewaySpool.java` |
+| Vigilante del nodo B | `sensor-simulator/.../watchdog/NodeWatchdog.java` (página `/vigilante.html`) |
 | Validación, normalización y anomalías | `ingestion-service/.../pipeline/EventNormalizer.java` |
-| DLQ y reintentos | `ingestion-service/.../config/KafkaConfig.java` |
+| Clases de falla, reintentos y DLQ | `common/.../kafka/FailureClassifier.java` y `ResilientErrorHandlers.java` |
+| Deduplicación con ficha de entrega | `ingestion-service/.../pipeline/RedisDedupStore.java` |
+| Reproceso de la DLQ | `alert-service/.../dlq/DlqReprocessor.java` |
+| Lista de placas autorreparable | `alert-service/.../jobs/WatchlistSyncJob.java` |
 | **Reglas de correlación** | `correlation-engine/src/main/resources/application.yml` |
 | Cálculo del puntaje | `correlation-engine/.../engine/RuleEvaluator.java` |
 | Incidentes, falsos positivos, fuga | `correlation-engine/.../engine/CorrelationEngine.java` |
 | Ventanas en Redis | `correlation-engine/.../engine/RedisWindowStore.java` |
 | Pruebas del modelo | `correlation-engine/src/test/.../CorrelationEngineTest.java` |
 | Esquema de la base | `alert-service/src/main/resources/db/migration/*.sql` |
-| Monitor de SLO y degradación | `alert-service/.../jobs/SloMonitorJob.java` |
+| Monitor de SLO, causa (sobrecarga o recuperación) y degradación | `alert-service/.../jobs/SloMonitorJob.java` |
 | Retención de placas | `alert-service/.../jobs/PlateRetentionJob.java` |
 | Ajuste adaptativo de umbrales | `alert-service/.../jobs/RuleQualityJob.java` |
 | Consola del operador | `alert-service/src/main/resources/static/` |
 | Dashboards | `infra/grafana/dashboards/*.json` |
 | Despliegue por nodo | `deploy/nodo-a`, `deploy/nodo-b`, `deploy/nodo-c` |
+| Operación desde Windows | `centinela.cmd` / `centinela.ps1` |
 
 ---
 
@@ -167,9 +195,11 @@ elección" (sección 4).
    - Necesitamos orden por zona (particiones con llave) y repartir la carga entre máquinas (grupos
      de consumidores).
 5. *¿Qué pasa si se cae Kafka?*
-   - Los eventos críticos (pánico, reportes) se guardan en disco en el simulador y se reenvían al
-     volver. Lo probamos: 0 pérdidas.
-   - La telemetría de esos segundos se pierde, y eso es aceptable según la política del ADR-006.
+   - Los eventos críticos (pánico, reportes, disparos) se escriben en disco **antes** de enviarse y
+     se reenvían al volver; lo mismo hace el gateway de la app (responde 202 `EN_COLA`). Lo probamos:
+     0 pérdidas, también con un `kill -9` del simulador en plena caída.
+   - La telemetría útil (placas, excesos, sonidos relevantes) se guarda con tope de 15 minutos; las
+     lecturas normales se pierden, y eso es aceptable según la política del ADR-006.
 6. *¿Por qué 12 particiones?* Es el máximo de consumidores en paralelo por grupo: 2 máquinas × 6 hilos.
 7. *¿Por qué un topic por tipo de sensor?* Para aislar la carga (una avalancha de LPR no retrasa los
    pánicos) y para que cada esquema evolucione por separado.
@@ -206,84 +236,107 @@ elección" (sección 4).
 
 **Resiliencia (ADR-006)**
 
-12. *¿Qué es la pérdida aceptable en su sistema?* Pánico y reportes: 0. Telemetría durante una caída
-    del broker: se acepta perderla. Lecturas de velocidad normales en modo degradado: se conserva el 10 %.
-13. *¿Qué pasa con un mensaje mal formado?* Va directo a la DLQ con su causa, sin reintentos, y no
-    bloquea a los demás. Lo demostramos inyectando mensajes con `kafka-console-producer`.
-14. *¿Y si un evento llega dos veces?* Se deduplica por `event_id` en Redis y la base lo ignora por
-    su llave primaria.
+12. *¿Qué es la pérdida aceptable en su sistema?* Pánico, reportes y disparos: 0, también desde la
+    app. Telemetría útil durante una caída del broker: se guarda la de los últimos 15 min. Lecturas
+    normales durante la caída: se pierden. En modo degradado: se conserva el 10 % de las velocidades
+    normales.
+13. *¿Qué pasa con un mensaje mal formado?* Va directo a la DLQ como falla PERMANENTE, sin
+    reintentos, y no bloquea a los demás. Lo demostramos inyectando mensajes con
+    `kafka-console-producer` y viéndolos con `centinela.cmd dlq`.
+14. *¿Y si un evento llega dos veces?* Se deduplica por `event_id` en Redis (distinguiendo un
+    reintento del mismo mensaje de un duplicado real) y la base lo ignora por su llave primaria.
+15. *¿Qué hacen los dos servidores y qué pasa si se cae cada uno?*
+    - **A guarda el estado** (Kafka, la base, Redis); **B lo procesa** (ingesta, correlación,
+      alertas, Grafana). B no guarda nada propio, por eso se puede reemplazar.
+    - **Cae B:** solo hay retraso. Los workers del nodo C siguen detectando, Kafka guarda el resto,
+      el vigilante lo anuncia en ~16 s y la consola avisa; al volver, recupera y destaca lo perdido.
+    - **Cae A:** no se detecta nada nuevo mientras dure, pero no se pierde nada crítico: se guarda en
+      disco en los nodos generadores y en el gateway. Al volver, un robo ocurrido durante la caída
+      sale como ROBO_EN_CURSO (no como falso positivo) y la lista de placas se recarga sola.
+    - A es el punto único de falla aceptado para el alcance académico; en producción se replica.
+16. *¿Cómo se enteran de que se cayó el servidor de la consola?* Con el vigilante del nodo C (página
+    `/vigilante.html` y `centinela.cmd estado`) y con el aviso "Sin conexión" de la propia consola.
+17. *¿Por qué al volver de una caída no se activa el modo degradado si el SLO está en rojo?* Porque
+    las alertas tardías son eventos que esperaron durante la caída. El monitor mira el atraso de
+    Kafka: si es bajo o baja, es **recuperación** (se avisa, no se degrada); solo si es grande y no
+    baja, es **sobrecarga**.
 
 **Seguridad y privacidad (ADR-007)**
 
-15. *¿Cómo protegen las placas?*
+18. *¿Cómo protegen las placas?*
     - Se seudonimizan con HMAC-SHA256 en la ingesta; la placa en claro nunca se guarda.
     - El operador ve `XYZ***`.
     - El seudónimo se borra a los 30 días.
     - Grafana no ve seudónimos.
-16. *¿Cómo identifican un vehículo para un juez, entonces?* Con un procedimiento formal: se aplica el
+19. *¿Cómo identifican un vehículo para un juez, entonces?* Con un procedimiento formal: se aplica el
     HMAC a la placa que la autoridad investiga y se busca ese seudónimo. No es posible listar todas
     las placas, y esa limitación es intencional.
-17. *¿Qué ley aplica?* El Decreto 57-2008 (Ley de Acceso a la Información Pública: datos sensibles y
+20. *¿Qué ley aplica?* El Decreto 57-2008 (Ley de Acceso a la Información Pública: datos sensibles y
     habeas data) para la municipalidad como sujeto obligado. Como referencia internacional, los
     principios del RGPD: minimización, limitación del plazo y privacidad desde el diseño.
 
 **Observabilidad (ADR-008)**
 
-18. *¿Cuál es su SLO y qué pasa si se incumple?*
+21. *¿Cuál es su SLO y qué pasa si se incumple?*
     - El 95 % de los avisos HIGH/CRITICAL deben quedar persistidos en menos de 2 s desde el evento.
-    - Si se incumple, el sistema activa solo el modo degradado y emite una alerta de sistema, y el
-      supervisor sigue el procedimiento (levantar *workers*).
-    - Lo vimos ocurrir en la prueba de sobrecarga ×100.
-19. *¿Cómo saben dónde está el cuello de botella?* Por el **lag de los consumidores** en Prometheus:
+    - Si se incumple, primero mira la causa: si el atraso de Kafka es grande y no baja
+      (**sobrecarga**), activa solo el modo degradado, emite una alerta de sistema y el supervisor
+      sigue el procedimiento (levantar *workers*); si es una **recuperación** tras una caída, solo
+      avisa.
+    - Lo vimos ocurrir en la prueba de sobrecarga ×100 (sobrecarga) y en las caídas de nodos
+      (recuperación).
+22. *¿Cómo saben dónde está el cuello de botella?* Por el **lag de los consumidores** en Prometheus:
     en la sobrecarga el lag del motor de correlación subió a 5 762 mensajes. Optimizamos el motor y
     el lag quedó en 0.
 
 **Correlación (ADR-009)**
 
-20. *Expliquen la fila 1 de la tabla 2.4.* Pánico ROBO en la Zona 4 (+0,40), exceso de velocidad de
+23. *Expliquen la fila 1 de la tabla 2.4.* Pánico ROBO en la Zona 4 (+0,40), exceso de velocidad de
     85 km/h en la misma zona (+0,30): 0,70, alerta HIGH. Placa XYZ123 a 87 km/h en una cámara de la
     misma zona (+0,20): 0,90, CRITICAL. La placa queda sospechosa: si aparece en la Zona 8, se genera
     `VEHICULO_EN_FUGA`.
-21. *¿Y la fila 2?* El pánico de la Zona 10 suma 0,40, menor que 0,70. Queda pendiente 90 s; como no
+24. *¿Y la fila 2?* El pánico de la Zona 10 suma 0,40, menor que 0,70. Queda pendiente 90 s; como no
     llega evidencia, se clasifica como `POSIBLE_FALSO_POSITIVO`, con severidad baja, para que el
     operador lo verifique con una llamada.
-22. *¿Por qué no usaron inteligencia artificial?*
+25. *¿Por qué no usaron inteligencia artificial?*
     - No hay datos históricos etiquetados de incidentes reales, y una caja negra es difícil de
       defender ante un juez.
     - Nuestro modelo es explicable.
     - Las validaciones de los operadores ya generan los datos etiquetados para entrenar un modelo
       en el futuro.
-23. *¿Cómo manejan los falsos positivos?*
+26. *¿Cómo manejan los falsos positivos?*
     - Exigiendo corroboración y marcando dispositivos abusivos.
     - Pidiendo dos señales para los disparos (por los cohetes).
     - Con umbrales adaptativos: si en una zona hay muchos falsos positivos validados, se exige más
       evidencia (+0,10).
-24. *¿Qué pasa si los eventos llegan desordenados?* Se correlaciona por la hora del evento y se
+27. *¿Qué pasa si los eventos llegan desordenados?* Se correlaciona por la hora del evento y se
     evalúa tanto al llegar el ancla como al llegar la evidencia, así que el orden no importa.
-25. *¿Cómo evitan alertas duplicadas?* Un incidente por tipo y zona durante 10 minutos: la nueva
+28. *¿Cómo evitan alertas duplicadas?* Un incidente por tipo y zona durante 10 minutos: la nueva
     evidencia lo **actualiza** (UPDATED/ESCALATED) en lugar de crear otro.
 
 **Stack (ADR-010)**
 
-26. *¿Por qué microservicios y no un monolito?* Por el requisito de arquitectura distribuida y para
+29. *¿Por qué microservicios y no un monolito?* Por el requisito de arquitectura distribuida y para
     repartir la carga entre máquinas: cada servicio escala por separado. Lo probamos con el motor en
     dos nodos.
-27. *¿Por qué el simulador en Java y no en Python, como sugiere el enunciado?* El curso exige Java;
+30. *¿Por qué el simulador en Java y no en Python, como sugiere el enunciado?* El curso exige Java;
     además reutiliza los mismos contratos de eventos (módulo `common`) y permite escenarios
     reproducibles con una API para la demo.
 
 **Generales**
 
-28. *¿Qué harían distinto en producción?*
-    - 3 brokers de Kafka y una réplica de PostgreSQL;
+31. *¿Qué harían distinto en producción?*
+    - 3 brokers de Kafka (factor de réplica 3), una réplica de PostgreSQL y Redis con Sentinel;
     - TLS y SASL;
     - llave HMAC en un gestor de secretos;
     - integración con el directorio de usuarios municipal;
     - NTP obligatorio.
-29. *¿Qué aprendieron de las pruebas?* Que probar los escenarios de falla descubre defectos que el
-    camino feliz no muestra. Encontramos y corregimos 4, entre ellos el spool que no tenía permisos
-    de escritura (ver `docs/resultados.md`).
-30. *¿Cómo se compara con casos reales?* Ver la sección 5.
+32. *¿Qué aprendieron de las pruebas?* Que probar los escenarios de falla descubre defectos que el
+    camino feliz no muestra. Primero encontramos 4 (entre ellos el spool sin permisos de escritura);
+    después, apagando de verdad cada servidor, otras 8 brechas entre lo que el ADR prometía y lo que
+    el sistema hacía (por ejemplo, un robo durante la caída de A clasificado como falso positivo).
+    Todas están corregidas y vueltas a probar (ver `docs/resultados.md` y ADR-006).
+33. *¿Cómo se compara con casos reales?* Ver la sección 5.
 
 ---
 
@@ -318,9 +371,12 @@ Se sugiere que cada integrante domine un bloque y que todos puedan explicar la t
 - [ ] Completar en la portada del informe los nombres, carnés y número de grupo.
 - [ ] Abrir el informe en Word y actualizar el índice: clic derecho → *Actualizar campos*.
 - [ ] Revisar el formato: carta, Arial 12, interlineado 1.5, márgenes de 2.54 cm, sangría y numeración.
-- [ ] Construir las imágenes Docker en casa y llevarlas al laboratorio (`docker save`).
-- [ ] Ensayar el guion de la demo (`docs/manual-operacion.md`, sección 3) al menos una vez en las
-  máquinas reales.
+- [ ] Construir las imágenes en casa y llevarlas al laboratorio (`centinela.cmd exportar-imagenes`
+  y, allá, `centinela.cmd importar-imagenes`).
+- [ ] Ensayar el guion de la demo (`docs/manual-operacion.md`, sección 4) al menos una vez en las
+  máquinas reales, incluida la caída de B y de A.
 - [ ] Cambiar contraseñas y la llave HMAC en `.env`.
-- [ ] Sincronizar la hora de todas las máquinas (NTP).
-- [ ] Tener listo el plan B: todo en una sola laptop con `docker compose up -d`.
+- [ ] Sincronizar la hora de todas las máquinas (Configuración → Hora → *Sincronizar ahora*);
+  `centinela.cmd estado` avisa si hay desfase.
+- [ ] Correr `centinela.cmd puertos` y `centinela.cmd firewall` en cada PC del laboratorio.
+- [ ] Tener listo el plan B: todo en una sola laptop (`centinela.cmd configurar` → una sola PC).

@@ -11,7 +11,7 @@ trade-offs), decisión, consecuencias e impacto en el negocio** (redactado para 
 | [ADR-003](ADR-003-persistencia-de-eventos.md) | **TimescaleDB** como única base de datos; se omite Elasticsearch | Persistencia de eventos |
 | [ADR-004](ADR-004-orquestacion-de-tareas-periodicas.md) | **Spring Scheduler + ShedLock** en lugar de Airflow | Orquestación de tareas periódicas |
 | [ADR-005](ADR-005-contenerizacion-y-orquestacion.md) | **Docker Compose** por nodo; decisión consciente de no usar Kubernetes | Contenerización y orquestación |
-| [ADR-006](ADR-006-resiliencia-y-tolerancia-a-fallos.md) | DLQ, reintentos, buffer en disco y política de pérdida aceptable | Resiliencia y tolerancia a fallos |
+| [ADR-006](ADR-006-resiliencia-y-tolerancia-a-fallos.md) | Escritura anticipada en disco, reintentos según la clase de falla, DLQ con reproceso, vigilante del nodo B y política de pérdida aceptable | Resiliencia y tolerancia a fallos |
 | [ADR-007](ADR-007-seguridad-y-privacidad-de-datos.md) | Seudonimización HMAC, retención de 30 días, mínimo privilegio y segmentación | Seguridad y privacidad de datos |
 | [ADR-008](ADR-008-observabilidad-y-slos.md) | 4 SLO medibles y degradación controlada automática | Observabilidad y SLOs |
 | [ADR-009](ADR-009-modelo-de-correlacion.md) | Motor de evidencia ponderada con ventanas en Redis | (adicional) Modelo de correlación |

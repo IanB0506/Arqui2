@@ -2,12 +2,14 @@ package gt.umg.centinela.correlation.config;
 
 import gt.umg.centinela.common.Topics;
 import gt.umg.centinela.common.kafka.ResilientErrorHandlers;
+import gt.umg.centinela.common.scheduling.ScheduledTaskErrorHandler;
 import gt.umg.centinela.correlation.engine.CorrelationEngine;
 import gt.umg.centinela.correlation.engine.CorrelationState;
 import gt.umg.centinela.correlation.engine.ThresholdAdjustments;
 import gt.umg.centinela.correlation.engine.WindowStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.TopicBuilder;
@@ -49,5 +51,11 @@ public class EngineConfig {
         return ResilientErrorHandlers.create(template, ResilientErrorHandlers.Settings.defaults(service),
                 (topic, kind) -> metrics.counter("correlation.dlq", "error_class", kind.name()).increment(),
                 (topic, kind) -> metrics.counter("correlation.retries", "error_class", kind.name()).increment());
+    }
+
+    /** Tareas periodicas: una falla por dependencia caida se resume en una linea, sin traza (ADR-006). */
+    @Bean
+    ThreadPoolTaskSchedulerCustomizer scheduledTaskErrors() {
+        return scheduler -> scheduler.setErrorHandler(new ScheduledTaskErrorHandler());
     }
 }

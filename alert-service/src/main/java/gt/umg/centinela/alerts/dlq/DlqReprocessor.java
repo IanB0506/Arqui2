@@ -146,8 +146,7 @@ public class DlqReprocessor {
                     item.put("clase", kind(record).name());
                     item.put("servicio", header(record, DlqHeaders.SERVICE));
                     item.put("reprocesos", intHeader(record, DlqHeaders.ATTEMPTS));
-                    String message = header(record, EXCEPTION_MESSAGE);
-                    item.put("causa", message == null ? null : message.length() > 200 ? message.substring(0, 200) : message);
+                    item.put("causa", cause(header(record, EXCEPTION_MESSAGE)));
                     last.addFirst(item);
                     if (last.size() > lastN) {
                         last.removeLast();
@@ -192,6 +191,15 @@ public class DlqReprocessor {
             }
         }
         return true;
+    }
+
+    /** Causa legible: sin el envoltorio "Listener method '...' threw exception; " de Spring Kafka. */
+    static String cause(String message) {
+        if (message == null) {
+            return null;
+        }
+        String clean = message.replaceFirst("^Listener method '.*?' threw exception; ", "");
+        return clean.length() > 200 ? clean.substring(0, 200) : clean;
     }
 
     static ProducerRecord<String, String> republished(ConsumerRecord<String, String> record, String topic,

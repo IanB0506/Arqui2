@@ -47,4 +47,13 @@ class DlqReprocessorTest {
         assertThat(DlqReprocessor.kind(dlqRecord("PERMANENTE", null))).isEqualTo(FailureKind.PERMANENTE);
         assertThat(DlqReprocessor.kind(new ConsumerRecord<>("events.dlq", 0, 1, "k", "v"))).isEqualTo(FailureKind.DESCONOCIDO);
     }
+
+    @Test
+    void laCausaSeMuestraSinElEnvoltorioDeSpring() {
+        String raw = "Listener method 'public void gt.umg.centinela.ingestion.pipeline.RawEventListener.panic("
+                + "org.apache.kafka.clients.consumer.ConsumerRecord<java.lang.String, java.lang.String>)' threw exception; "
+                + "Timestamp en el futuro: 2026-10-15T21:31:25Z";
+        assertThat(DlqReprocessor.cause(raw)).isEqualTo("Timestamp en el futuro: 2026-10-15T21:31:25Z");
+        assertThat(DlqReprocessor.cause(null)).isNull();
+    }
 }

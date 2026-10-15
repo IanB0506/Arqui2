@@ -1,6 +1,6 @@
 # Evaluación de resultados de la simulación
 
-Las mediciones se tomaron el 9 y 10 de octubre de 2026 en un solo equipo (4 núcleos, 16 GB de RAM).
+Las mediciones se tomaron el 9, 10 y 15 de octubre de 2026 en un solo equipo (4 núcleos, 16 GB de RAM).
 Primero se usó el modo de una sola máquina; después, el modo **multi-nodo**: los composes de los
 nodos A, B y C (con *workers*), levantados como proyectos independientes y conectados por IP, igual
 que en el laboratorio. Todos los servicios compartían los mismos 4 núcleos, así que las cifras son un
@@ -63,11 +63,28 @@ La operación normal simulada es de 13,5 eventos/s en las 12 zonas.
 
 ## 3. Pruebas de resiliencia
 
+### 3.1 Caídas de los servidores (15 de octubre, versión final)
+
+Se apagó de verdad cada servidor con `centinela.cmd caida A|B`, con tráfico de fondo, un escenario
+en curso y la consola del operador abierta en un navegador automatizado (Playwright) que registraba
+lo que veía el operador.
+
+| Prueba | Qué se hizo | Resultado medido |
+|---|---|---|
+| **Caída del nodo B** (93 s), workers en C | Se apagó B y se lanzó `disparos` en la Zona 2 | El vigilante declaró **NODO B SIN RESPUESTA a los 16 s** y dijo "La detección continúa en: correlation-engine-nodo-c". El worker de C generó **DISPAROS_CONFIRMADOS CRITICAL 10 s después** del escenario. Mientras tanto, 433 eventos esperaban en Kafka al grupo `event-store` (sin consumidor). La consola mostró "Sin conexión…" y, al volver B, "Conexión restablecida tras 107 s: 1 alerta…", destacada como "LLEGÓ 91 s TARDE". SLO: **RECUPERACIÓN**, sin modo degradado. |
+| **Caída del nodo A** (82 s): Kafka, base y Redis | Se apagó A, se lanzó `robo-en-curso` en la Zona 4 y se envió un pánico por la app (`POST /api/v1/panic`) | El gateway respondió **202 `EN_COLA`**. El simulador guardó en disco 4 críticos y 222 eventos de telemetría útil. Al volver A, el spool se vació en 3 s, la lista de placas robadas se recargó sola a los 20 s y el robo salió como **ROBO_EN_CURSO HIGH → CRITICAL** (no como falso positivo). El pánico de la app quedó guardado y generó EMERGENCIA_MEDICA. Un `vehiculo-robado` lanzado después dio VEHICULO_REPORTADO en 38 ms. SLO: **RECUPERACIÓN** en las 5 mediciones, sin modo degradado. El vigilante dijo "Causa probable: el nodo A (datos) no responde". **0 eventos críticos perdidos.** |
+| **Redis caído** (45 s) | Se detuvo solo Redis y se lanzó `disparos` | **Nada fue a la DLQ** (0 → 0). La ingesta siguió sin deduplicar con un solo aviso; el motor reintentó como falla transitoria. Al volver Redis salió DISPAROS_CONFIRMADOS y la lista de placas se recargó a los 33 s. Ninguna traza de error en los logs. |
+| **`kill -9` del simulador con Kafka caído** | Se detuvo Kafka, se lanzó `emergencia-medica` y se mató el proceso del simulador | Al arrancar, el diario *write-ahead* devolvió "1 mensajes pendientes recuperados"; se reenvió y salió EMERGENCIA_MEDICA. **0 perdidos.** |
+| **Mensajes inválidos** | 3 mensajes con `kafka-console-producer`: JSON roto, timestamp en el futuro y tipo de alerta inexistente | Los 3 en `events.dlq` como **PERMANENTE** (sin reintentos), visibles con `centinela.cmd dlq`. El reproceso por defecto los saltó (3 leídos, 0 reinyectados), como debe ser. |
+
+### 3.2 Primera ronda (9 y 10 de octubre)
+
 | Prueba | Procedimiento | Resultado |
 |---|---|---|
-| Mensajes inválidos | 3 mensajes inyectados con `kafka-console-producer`: JSON roto, timestamp en el futuro y tipo de alerta inexistente | Los 3 fueron a `events.dlq` sin reintentos, con cabeceras que indican la causa y el topic de origen. El resto del flujo no se afectó. |
-| Caída de Kafka | Se detuvo el broker y se presionó un botón de emergencia médica | El evento quedó en el spool en disco. Al reiniciar Kafka se reenvió en 7 s y la alerta llegó (latencia de 14,5 s, que incluye la caída). **0 eventos críticos perdidos.** La telemetría de esos segundos se descartó, como define la política. |
+| Mensajes inválidos | 3 mensajes inyectados con `kafka-console-producer` | Los 3 fueron a `events.dlq` sin reintentos, con su causa y el topic de origen. El resto del flujo no se afectó. |
+| Caída de Kafka | Se detuvo el broker y se presionó un botón de emergencia médica | El evento quedó en el spool en disco y se reenvió 7 s después de reiniciar Kafka (latencia de 14,5 s, que incluye la caída). |
 | Caída de una instancia | Se apagó el worker de correlación del nodo C | Kafka reasignó sus particiones al nodo B. Una alerta de disparos se generó en 188 ms con el worker caído. Al volver, se repartieron 6 y 6. |
+| Caídas de nodos completos (versión anterior) | Caída de B (con y sin workers), de A, de ambos y apagón total | Funcionaban la retención en Kafka y el spool de críticos, pero se encontraron las 8 brechas de la sección 5.2. |
 
 ## 4. Distribución de carga entre máquinas
 
@@ -84,6 +101,8 @@ estado vive en Redis compartido.
 
 ## 5. Hallazgos y correcciones durante las pruebas
 
+### 5.1 Primera ronda
+
 Probar escenarios de falla, y no solo el camino feliz, descubrió cuatro defectos reales:
 
 | # | Hallazgo | Causa | Corrección |
@@ -93,13 +112,37 @@ Probar escenarios de falla, y no solo el camino feliz, descubrió cuatro defecto
 | 3 | Un incidente abierto absorbía la evidencia nueva sin avisar | Solo se re-emitía la alerta si subía la severidad | Nueva revisión `UPDATED` cuando se suma un testigo o ancla; se agregó una prueba. La validación limpia primero el estado temporal para ser reproducible. |
 | 4 | Se activó la degradación sin sobrecarga real | La corroboración tardía usaba como disparador el ancla de hace 90 s, lo que registraba una latencia falsa | El disparador es la evidencia más reciente. El SLO mide los avisos que el operador debe conocer de inmediato (NEW / ESCALATED). |
 
+### 5.2 Caídas de nodos completos: 8 brechas y su corrección
+
+Apagar cada servidor mostró diferencias entre lo que prometía el ADR-006 y lo que hacía el sistema.
+Todas se corrigieron y se volvieron a probar (sección 3.1):
+
+| # | Brecha | Cómo se supo | Corrección | Comprobación |
+|---|---|---|---|---|
+| 1 | Al volver A, la lista de placas robadas quedaba vacía hasta 10 min: un vehículo robado pasó sin alerta | Prueba | Llave centinela revisada cada 15 s y sincronización atómica | Recargada a los 20 s; VEHICULO_REPORTADO en 38 ms |
+| 2 | Un robo durante la caída de A se clasificaba como POSIBLE_FALSO_POSITIVO | Prueba | Spool de telemetría útil (15 min) y pausa de la clasificación durante la puesta al día | ROBO_EN_CURSO CRITICAL |
+| 3 | Nadie avisaba que B había caído | Prueba | Vigilante en el nodo C y aviso de conexión en la consola | Detectado a los 16 s; banner y alertas destacadas |
+| 4 | Al recuperarse, el SLO activaba la degradación sin sobrecarga | Prueba | Causa por atraso de Kafka: sobrecarga solo si es grande y sostenido | RECUPERACIÓN, sin degradar |
+| 5 | El spool se escribía cuando el envío ya había fallado: hasta 30 s en memoria | Código | Escritura anticipada con `fsync` y diario con CRC32C | `kill -9` sin pérdida |
+| 6 | El gateway de la app respondía 500 si caía A | Código | Spool en el gateway: 202 `EN_COLA` | 202 y alerta al volver A |
+| 7 | Lo que agotaba los reintentos iba a la DLQ y nadie lo reprocesaba | Código | Reintentos sin límite para fallas transitorias y reproceso automático de la DLQ | Redis caído 45 s: 0 en la DLQ |
+| 8 | No había respaldo de la base | Configuración | `pg_dump` cada 6 h y `centinela.cmd restaurar` | Respaldo y restauración probados |
+
+Al repetir las pruebas con las correcciones aparecieron tres detalles más, también corregidos: la
+primera medición del SLO tras una caída (atraso de 1 030 mensajes mientras se vaciaba el spool) se
+clasificaba como sobrecarga, por lo que ahora se exige un atraso **sostenido**; el vigilante
+declaraba caído al alert-service cuando su chequeo de salud esperaba 30 s a la base, por lo que
+ahora pregunta además si el proceso está vivo; y cada tarea periódica escribía la traza completa en
+cada ronda durante la caída (cientos de líneas por minuto), por lo que ahora se resume en una línea.
+
 ## 6. Pruebas automatizadas
 
-`mvn install` ejecuta **26 pruebas unitarias**:
+`mvn install` (o `centinela.cmd pruebas`) ejecuta **90 pruebas unitarias**:
 
 | Módulo | Pruebas | Qué cubren |
 |---|---|---|
-| common | 4 | Resolución de zonas, zona más cercana, vecinos, seudonimización HMAC |
-| sensor-simulator | 2 | Ruta de fuga y lectura del CSV de replay |
-| ingestion-service | 5 | Seudonimización de placas, generalización de ubicación, anomalías, rechazo de eventos inválidos |
-| correlation-engine | 15 | El modelo completo, con las reglas reales del YAML |
+| common | 34 | Zonas, seudonimización HMAC; diario *write-ahead* (corte de luz con línea truncada, compactación, reinicio con pendientes, topes, `fsync` agrupado concurrente); clasificación de fallas; manejadores de reintento; resumen de errores de tareas periódicas |
+| sensor-simulator | 12 | Ruta de fuga, CSV de replay, qué se guarda en disco si cae Kafka, publicación *write-ahead*, lógica del vigilante (incluye un servidor HTTP real que se cuelga) |
+| ingestion-service | 16 | Seudonimización, generalización de ubicación, anomalías, rechazo de inválidos, deduplicación con ficha de entrega, gateway con spool |
+| correlation-engine | 20 | El modelo completo con las reglas reales del YAML y la resiliencia del motor (publicar antes de guardar, IDs deterministas, pausa de falsos positivos en la puesta al día) |
+| alert-service | 8 | Reproceso de la DLQ y causa del incumplimiento del SLO |

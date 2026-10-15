@@ -14,6 +14,9 @@ spring:
     password: ${DB_PASSWORD:centinela}
     hikari:
       maximum-pool-size: 10
+      # Con la base caida, esperar 30 s por una conexion colgaba /actuator/health y el vigilante
+      # creia muerto al servicio. 2 s basta en la LAN; la falla se reintenta como transitoria.
+      connection-timeout: ${DB_CONNECTION_TIMEOUT:2000}
   flyway:
     placeholders:
       grafanaPassword: ${GRAFANA_DB_PASSWORD:grafana-reader}
@@ -59,6 +62,7 @@ alerts:
     target-ratio: 0.95              # ...en al menos el 95 % de los casos
     window: 5m
     freshness-threshold-ms: 10000   # los datos deben verse en el dashboard en menos de 10 s
+    overload-lag: 1000              # sobrecarga = atraso >= 1000 mensajes y creciendo (si no, es puesta al dia)
   security:
     operator-user: ${OPERATOR_USER:operador}
     operator-password: ${OPERATOR_PASSWORD:operador123}
@@ -79,3 +83,13 @@ management:
     tags:
       application: ${spring.application.name}
       node: ${NODE_NAME:nodo-b}
+
+logging:
+  level:
+    # Con Kafka caido, cada consumidor repite "Connection to node 1 could not be established" cada
+    # segundo; el vigilante y /actuator/health ya informan la caida y la recuperacion (ADR-006).
+    org.apache.kafka.clients.NetworkClient: ${KAFKA_NETWORK_LOG_LEVEL:ERROR}
+    # El chequeo de salud de Redis escribe la traza completa en cada consulta; el estado ya se ve en
+    # /actuator/health y en el vigilante.
+    org.springframework.boot.actuate.data.redis: ERROR
+    org.springframework.boot.actuate.jdbc: ERROR

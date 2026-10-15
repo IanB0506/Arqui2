@@ -30,7 +30,9 @@ public record AlertServiceProperties(
      * @param window             ventana de medicion
      * @param freshnessThresholdMs retraso maximo aceptable entre un evento y su almacenamiento
      */
-    public record Slo(long latencyThresholdMs, double targetRatio, Duration window, long freshnessThresholdMs) {
+    /** @param overloadLag atraso (mensajes en Kafka) a partir del cual, si no baja, hay sobrecarga */
+    public record Slo(long latencyThresholdMs, double targetRatio, Duration window, long freshnessThresholdMs,
+                      long overloadLag) {
     }
 
     public record Security(String operatorUser, String operatorPassword, String adminUser, String adminPassword) {

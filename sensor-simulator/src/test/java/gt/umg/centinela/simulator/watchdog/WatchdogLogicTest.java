@@ -1,9 +1,14 @@
 package gt.umg.centinela.simulator.watchdog;
 
+import com.sun.net.httpserver.HttpServer;
 import gt.umg.centinela.simulator.watchdog.WatchdogStatus.Observation;
 import gt.umg.centinela.simulator.watchdog.WatchdogStatus.Transition;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -43,5 +48,35 @@ class WatchdogLogicTest {
         assertThat(NodeWatchdog.nodeBState(List.of(HealthState.UP, HealthState.DEGRADED))).isEqualTo("DEGRADADO");
         assertThat(NodeWatchdog.nodeBState(List.of(HealthState.UP, HealthState.UP))).isEqualTo("OPERATIVO");
         assertThat(NodeWatchdog.nodeBState(List.of(HealthState.UNKNOWN))).isEqualTo("DESCONOCIDO");
+    }
+
+    @Test
+    void siElChequeoCompletoSeCuelgaPeroElProcesoVive_estaDegradadoNoCaido() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext("/actuator/health", exchange -> {
+            if (exchange.getRequestURI().getPath().endsWith("/liveness")) {
+                byte[] body = "{\"status\":\"UP\"}".getBytes();
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            } else {
+                try {
+                    Thread.sleep(1_500); // la base no responde y el chequeo espera la conexion
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.sendResponseHeaders(503, -1);
+            }
+            exchange.close();
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            Observation o = new HttpProbe(Duration.ofMillis(400)).probe(base + "/actuator/health");
+            assertThat(o.state()).isEqualTo(HealthState.DEGRADED);
+            assertThat(o.detail()).contains("vivo");
+        } finally {
+            server.stop(0);
+        }
     }
 }

@@ -17,13 +17,14 @@ uno escala y falla de forma independiente.
 
 | Componente | Tecnología | Nodo | Responsabilidad |
 |---|---|---|---|
-| sensor-simulator | Java 21, Spring Boot 3.5 | C/D | Emula los 5 sensores; escenarios, picos, replay CSV, spool, validación automática |
-| ingestion-service | Java 21, Spring Boot, Spring Kafka | B (+ workers en C/D) | Validación, normalización, seudonimización, deduplicación, DLQ, gateway REST |
+| sensor-simulator | Java 21, Spring Boot 3.5 | C/D | Emula los 5 sensores; escenarios, picos, replay CSV, validación automática; spool *write-ahead* en disco y **vigilante** del nodo B |
+| ingestion-service | Java 21, Spring Boot, Spring Kafka | B (+ workers en C/D) | Validación, normalización, seudonimización, deduplicación, DLQ, gateway REST con spool en disco |
 | correlation-engine | Java 21, Spring Boot, Redis | B (+ workers en C/D) | Reglas de evidencia ponderada, incidentes, falsos positivos, seguimiento de placas |
-| alert-service | Java 21, Spring Boot, Spring Security, Flyway, ShedLock | B | Persistencia, API REST + SSE, consola del operador, tareas periódicas |
+| alert-service | Java 21, Spring Boot, Spring Security, Flyway, ShedLock | B | Persistencia, API REST + SSE, consola del operador, tareas periódicas (SLO, lista de placas, reproceso de la DLQ) |
 | Apache Kafka 3.9 (KRaft) | Broker de eventos | A | Transporte desacoplado y persistente ([ADR-002](adr/ADR-002-broker-de-eventos.md)) |
 | TimescaleDB 2.17 (PG 16) | Base de series de tiempo y relacional | A | Eventos, alertas, auditoría, SLO ([ADR-003](adr/ADR-003-persistencia-de-eventos.md)) |
 | Redis 7.4 | Almacén en memoria | A | Ventanas de correlación, incidentes, deduplicación, lista de placas, bandera de degradación |
+| db-backup | `pg_dump` en un contenedor | A | Respaldo de la base cada 6 h (se guardan 8) y restauración con un comando |
 | Prometheus 3.1 | Métricas | B | Métricas técnicas de los servicios ([ADR-008](adr/ADR-008-observabilidad-y-slos.md)) |
 | Grafana 11.4 | Visualización | B | 3 dashboards provisionados |
 
@@ -33,9 +34,15 @@ uno escala y falla de forma independiente.
 
 | Nodo | Función | SO | Composición |
 |---|---|---|---|
-| A | Datos | Ubuntu Server 22.04 | `deploy/nodo-a/docker-compose.yml` |
-| B | Microservicios y visualización | macOS / Linux | `deploy/nodo-b/docker-compose.yml` |
-| C / D | Generación de eventos + workers | Windows / Linux | `deploy/nodo-c/docker-compose.yml` |
+| A | Datos | Windows 10/11 + Docker Desktop | `deploy/nodo-a/docker-compose.yml` |
+| B | Microservicios y visualización | Windows 10/11 + Docker Desktop | `deploy/nodo-b/docker-compose.yml` |
+| C / D | Generación de eventos + workers | Windows 10/11 + Docker Desktop | `deploy/nodo-c/docker-compose.yml` |
+
+Todas las PCs del laboratorio son Windows: cada nodo se configura y se levanta con `centinela.cmd`
+(`configurar -Nodo A`, `firewall`, `iniciar`), que llama a Docker Compose con el archivo del nodo. Los
+contenedores son Linux, pero Docker Desktop los ejecuta por su cuenta; nadie tiene que usar Linux. En
+producción el nodo A iría preferentemente en Linux de servidor ([ADR-005](adr/ADR-005-contenerizacion-y-orquestacion.md)),
+sin cambiar nada de los composes.
 
 Reglas de red: ver [ADR-007](adr/ADR-007-seguridad-y-privacidad-de-datos.md) y la guía [`deploy/README.md`](../deploy/README.md).
 
@@ -96,7 +103,7 @@ convierten a un modelo homogéneo:
 | `alert_revisions` | Tabla | Historial de revisiones con latencia (base del SLO) |
 | `audit_log` | Tabla | Validaciones, cambios en la lista de placas, purgas, reinicios |
 | `plate_watchlist` | Tabla | Seudónimos de placas robadas |
-| `slo_measurements` | Tabla | Mediciones de SLO cada 30 s |
+| `slo_measurements` | Tabla | Mediciones de SLO cada 30 s, con la causa de cada incumplimiento (sobrecarga o recuperación) y el atraso de Kafka |
 | `rule_quality` | Tabla | Precisión por regla y zona, y ajuste de umbral |
 | `shedlock` | Tabla | Bloqueos de las tareas periódicas |
 | `v_events`, `v_alerts` | Vistas | Lo que ve Grafana: **sin seudónimos** |
@@ -110,3 +117,17 @@ Las diez decisiones relevantes están en [`docs/adr/`](adr/README.md).
 ## 7. Correlación e inferencia
 
 Ver [`correlacion.md`](correlacion.md).
+
+## 8. Tolerancia a fallos
+
+El diseño separa el **estado** (nodo A: Kafka, TimescaleDB, Redis) del **cómputo** (nodo B y workers
+en C/D). Resumen de lo que ocurre ante cada falla (detalle y mediciones en
+[ADR-006](adr/ADR-006-resiliencia-y-tolerancia-a-fallos.md) y [`resultados.md`](resultados.md)):
+
+| Falla | Qué hace el sistema | Qué se pierde |
+|---|---|---|
+| Cae el nodo B | Los workers de C siguen detectando; Kafka guarda lo demás. El **vigilante** de C lo anuncia en ~16 s y la consola avisa "sin conexión"; al volver, recupera y destaca lo perdido | Nada: solo retraso |
+| Cae el nodo A | Simulador y gateway guardan en disco (*write-ahead*) los críticos y la telemetría útil de los últimos 15 min, y los reenvían al volver. La lista de placas se recarga sola en ~20 s | Lecturas de velocidad normales, ruido ambiental y la memoria de corto plazo de Redis |
+| Redis o la base caen unos minutos | Reintentos sin límite con espera exponencial (tope 30 s); nada de eso va a la DLQ | Nada |
+| Mensaje inválido | DLQ inmediata con la clase de falla; el resto del flujo sigue | Ese mensaje queda apartado para análisis |
+| Muere un proceso a mitad de una alerta | Alertas con ID determinista y persistencia idempotente: el reproceso produce la misma alerta, sin duplicarla | Nada |

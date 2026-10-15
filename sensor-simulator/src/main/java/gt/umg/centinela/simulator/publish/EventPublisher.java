@@ -7,6 +7,7 @@ import gt.umg.centinela.simulator.generator.SimulatedEvent;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -49,6 +50,7 @@ public class EventPublisher {
     private volatile Instant lastFailureAt;
     private volatile String lastError;
 
+    @Autowired
     public EventPublisher(KafkaTemplate<String, String> kafka, SpoolService spool, SpoolPolicy policy,
                           MeterRegistry metrics) {
         this(kafka, spool, policy, metrics, Clock.systemUTC());

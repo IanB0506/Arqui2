@@ -22,7 +22,8 @@ import java.util.concurrent.TimeUnit;
 public class ConsumerLagProbe {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerLagProbe.class);
-    static final List<String> GROUPS = List.of("ingestion", "correlation");
+    /** Camino completo: ingesta, correlacion y las dos persistencias (eventos y alertas). */
+    static final List<String> GROUPS = List.of("ingestion", "correlation", "event-store", "alert-store");
 
     private final KafkaAdmin kafkaAdmin;
     private AdminClient admin;
@@ -41,21 +42,21 @@ public class ConsumerLagProbe {
                         .partitionsToOffsetAndMetadata().get(3, TimeUnit.SECONDS);
                 offsets.forEach((tp, om) -> {
                     if (om != null) {
-                        committed.merge(tp, om.offset(), Long::sum);
+                        committed.put(new TopicPartition(group + "|" + tp.topic(), tp.partition()), om.offset());
                     }
                 });
-                // cada grupo consume particiones distintas (topics distintos), asi que se pueden sumar
             }
             if (committed.isEmpty()) {
                 return 0L;
             }
+            // varios grupos leen el mismo topic (events.normalized): la llave interna lleva el grupo
             Map<TopicPartition, OffsetSpec> latest = new HashMap<>();
-            committed.keySet().forEach(tp -> latest.put(tp, OffsetSpec.latest()));
+            committed.keySet().forEach(tp -> latest.put(real(tp), OffsetSpec.latest()));
             Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> ends = client.listOffsets(latest).all()
                     .get(3, TimeUnit.SECONDS);
             long lag = 0;
             for (Map.Entry<TopicPartition, Long> e : committed.entrySet()) {
-                ListOffsetsResult.ListOffsetsResultInfo end = ends.get(e.getKey());
+                ListOffsetsResult.ListOffsetsResultInfo end = ends.get(real(e.getKey()));
                 if (end != null) {
                     lag += Math.max(0, end.offset() - e.getValue());
                 }
@@ -65,6 +66,10 @@ public class ConsumerLagProbe {
             log.debug("No se pudo medir el atraso de los consumidores: {}", e.toString());
             return null;
         }
+    }
+
+    private static TopicPartition real(TopicPartition grouped) {
+        return new TopicPartition(grouped.topic().substring(grouped.topic().indexOf('|') + 1), grouped.partition());
     }
 
     private AdminClient client() {

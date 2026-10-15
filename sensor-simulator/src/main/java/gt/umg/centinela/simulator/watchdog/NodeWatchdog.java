@@ -181,6 +181,7 @@ public class NodeWatchdog {
         }
         StringBuilder sb = new StringBuilder(down.isEmpty() ? "Todos los servicios responden." : "Caidos o degradados: "
                 + String.join(", ", down) + ".");
+        sb.append(nodeACause());
         for (GroupStatus g : groups) {
             if (g.group().equals("correlation") && !down.isEmpty()) {
                 sb.append(g.consumers().isEmpty() ? " La deteccion esta detenida: los eventos esperan en Kafka."
@@ -191,6 +192,31 @@ public class NodeWatchdog {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * Si lo que falla son las dependencias que viven en el nodo A (Kafka, Redis, la base), lo dice: el
+     * nodo B esta vivo y se pondra al dia solo cuando A vuelva. Evita buscar el problema en B.
+     */
+    private String nodeACause() {
+        List<String> signs = new ArrayList<>();
+        if (kafkaTracker.state() == HealthState.DOWN) {
+            signs.add("Kafka no responde");
+        }
+        Map<String, Integer> dependencies = new LinkedHashMap<>();
+        for (HealthTracker t : targets.values()) {
+            TargetStatus s = t.status();
+            if (s.state() == HealthState.DEGRADED && s.detail() != null) {
+                for (String dependency : List.of("redis", "db")) {
+                    if (s.detail().contains(dependency + " DOWN")) {
+                        dependencies.merge(dependency, 1, Integer::sum);
+                    }
+                }
+            }
+        }
+        dependencies.forEach((dependency, n) -> signs.add(dependency + " DOWN en " + n + " servicio(s)"));
+        return signs.isEmpty() ? "" : " Causa probable: el nodo A (datos) no responde (" + String.join("; ", signs)
+                + "). El nodo B esta vivo y se pone al dia solo cuando A vuelva.";
     }
 
     static String nodeBState(Collection<HealthState> states) {

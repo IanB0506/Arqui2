@@ -1,10 +1,12 @@
 package gt.umg.centinela.ingestion.config;
 
 import gt.umg.centinela.common.privacy.PlatePseudonymizer;
+import gt.umg.centinela.common.scheduling.ScheduledTaskErrorHandler;
 import gt.umg.centinela.ingestion.pipeline.EventNormalizer;
 import jakarta.validation.Validator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.task.ThreadPoolTaskSchedulerCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -32,5 +34,11 @@ public class IngestionBeans {
     public EventNormalizer eventNormalizer(IngestionProperties properties, PlatePseudonymizer pseudonymizer,
                                            Validator validator, Clock clock) {
         return new EventNormalizer(properties, pseudonymizer, validator, clock);
+    }
+
+    /** Tareas periodicas: una falla por dependencia caida se resume en una linea, sin traza (ADR-006). */
+    @Bean
+    ThreadPoolTaskSchedulerCustomizer scheduledTaskErrors() {
+        return scheduler -> scheduler.setErrorHandler(new ScheduledTaskErrorHandler());
     }
 }
