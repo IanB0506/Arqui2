@@ -33,7 +33,7 @@ param(
     [switch] $Quitar,
     [switch] $Si,
     [int] $Zona = 0,
-    [double] $Velocidad = 1,
+    [string] $Velocidad = '1',
     [int] $Multiplicador = 20,
     [int] $Segundos = 60,
     [switch] $IncluirPermanentes,
@@ -191,6 +191,15 @@ function ConvertTo-Roles([string]$Texto) {
 function Get-Generadores($Cfg) { return @(([string]$Cfg['GENERATOR_IPS']) -split '[,; ]+' | Where-Object { $_ }) }
 
 function Test-Workers($Cfg) { return ([string]$Cfg['WORKERS']).Trim().ToLower() -in @('true', 'si', 'sí', '1', 'yes') }
+
+# -Velocidad acepta "0,5" o "0.5": en Windows en español la coma es el separador decimal
+function Get-Velocidad {
+    $texto = ([string]$Velocidad).Trim().Replace(',', '.')
+    $v = 0.0
+    $ok = [double]::TryParse($texto, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v)
+    if (-not $ok -or $v -lt 0.1 -or $v -gt 10) { Stop-Centinela "Velocidad inválida: '$Velocidad' (use un valor entre 0,1 y 10)." }
+    return $v.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
 
 # Zonas de cada generador: C (índice 0) y D (índice 1) se reparten las 12 zonas
 function Get-ZonasGenerador([int]$Indice, [int]$Total) {
@@ -559,6 +568,7 @@ function Repair-Puertos([string[]]$Roles, $Cfg, [bool]$Corregir) {
     if ($Roles -notcontains 'UNICO') {
         Write-Aviso 'IMPORTANTE: cambió un puerto que usan las otras PCs. Copie de nuevo el archivo .env'
         Write-Info  "($ArchivoEnv) a la carpeta del proyecto de las demás PCs y repita ahí 'centinela.cmd configurar'."
+        Write-Aviso "Y en ESTA PC ejecute 'centinela.cmd firewall' para abrir el puerto nuevo."
     }
     return $true
 }
@@ -735,7 +745,8 @@ function Invoke-Configurar {
 
     # 2. Varias PCs: todas deben usar el MISMO .env
     if (-not $unico) {
-        if (-not $existe) {
+        # Un .env con la llave de ejemplo (p. ej. creado por 'compilar') no es el de la primera PC
+        if (-not $existe -or $cfg['PLATE_HMAC_SECRET'] -like 'cambie-esta-llave*') {
             Write-Aviso 'En varias PCs todas usan el mismo archivo .env (IPs, puertos y secretos iguales).'
             if (-not (Read-SiNo '¿Es esta la PRIMERA PC que configura?' $true)) {
                 Stop-Centinela "Copie el .env de la primera PC a $ArchivoEnv y vuelva a ejecutar 'centinela.cmd configurar'."
@@ -765,7 +776,7 @@ function Invoke-Configurar {
             if (-not (Test-IpValida $ip)) { Stop-Centinela "IP inválida: $ip" }
             if ($ip -like '127.*' -or $ip -like '169.254.*') { Stop-Centinela "La IP $ip no sirve entre PCs: use la IP de la red local (ipconfig)." }
         }
-        $w = if ($Workers) { $true } elseif ($SinWorkers) { $false } else { Read-SiNo '¿Levantar también workers de ingesta y correlación en C/D (reparto de carga)?' (Test-Workers $cfg) }
+        $w = if ($Workers) { $true } elseif ($SinWorkers) { $false } elseif ($Si) { Test-Workers $cfg } else { Read-SiNo '¿Levantar también workers de ingesta y correlación en C/D (reparto de carga)?' (Test-Workers $cfg) }
         $cambios['NODE_A_IP'] = $a; $cambios['NODE_B_IP'] = $b; $cambios['GENERATOR_IPS'] = $g
         $cambios['WORKERS'] = if ($w) { 'true' } else { 'false' }
         foreach ($k in $cambios.Keys) { $cfg[$k] = $cambios[$k] }
@@ -963,7 +974,7 @@ function Invoke-Detener {
         Write-Titulo "Deteniendo nodo $rol"
         $argumentos = @('down')
         if ($Borrar) { $argumentos += '-v' }
-        $null = Invoke-Compose $rol $cfg $argumentos
+        if ((Invoke-Compose $rol $cfg $argumentos) -ne 0) { Write-Fallo "docker compose down falló en el nodo $rol (ver arriba)." }
     }
 }
 
@@ -1042,7 +1053,7 @@ function Invoke-Escenarios {
 function Invoke-Escenario {
     if (-not $Objetivo) { Stop-Centinela 'Indique el escenario, p. ej.: centinela.cmd escenario tabla-2-4  (vea "centinela.cmd escenarios")' }
     $u = Get-Urls (Get-Config)
-    $url = '{0}/api/scenarios/{1}?speed={2}' -f $u.Simulador, $Objetivo, $Velocidad.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $url = '{0}/api/scenarios/{1}?speed={2}' -f $u.Simulador, $Objetivo, (Get-Velocidad)
     if ($Zona -gt 0) { $url += "&zone=$Zona" }
     $r = Invoke-Api 'POST' $url
     Write-Ok "Escenario '$($r.title)' lanzado. Mírelo en la consola: $($u.Consola)"
@@ -1081,7 +1092,7 @@ function Invoke-Fondo {
 function Invoke-Replay {
     $u = Get-Urls (Get-Config)
     $recurso = if ($Objetivo) { $Objetivo } else { 'noche-de-viernes.csv' }
-    $url = '{0}/api/replay?resource={1}&speed={2}&jitter=true' -f $u.Simulador, $recurso, $Velocidad.ToString([Globalization.CultureInfo]::InvariantCulture)
+    $url = '{0}/api/replay?resource={1}&speed={2}&jitter=true' -f $u.Simulador, $recurso, (Get-Velocidad)
     $r = Invoke-Api 'POST' $url @{} 60
     Write-Ok "Replay de $recurso lanzado: $($r | ConvertTo-Json -Compress)"
 }
@@ -1119,12 +1130,13 @@ function Invoke-Caida([bool]$Encender) {
     $accion = if ($Encender) { 'start' } else { 'stop' }
     if ($roles -contains 'UNICO') {
         $clave = if ($objetivo -eq 'D') { 'C' } else { $objetivo }
-        $null = Invoke-Compose 'UNICO' $cfg (@($accion) + $ServiciosPorNodo[$clave])
+        $codigo = Invoke-Compose 'UNICO' $cfg (@($accion) + $ServiciosPorNodo[$clave])
     } elseif ($roles -contains $objetivo) {
-        $null = Invoke-Compose $objetivo $cfg @($accion)
+        $codigo = Invoke-Compose $objetivo $cfg @($accion)
     } else {
         Stop-Centinela "El nodo $objetivo no corre en esta PC: ejecute el comando en la PC del nodo $objetivo."
     }
+    if ($codigo -ne 0) { Stop-Centinela "docker compose $accion falló en el nodo $objetivo (ver arriba)." }
     if ($Encender) { Write-Ok "Nodo $objetivo encendido de nuevo." }
     else { Write-Ok "Nodo $objetivo apagado. Observe la consola, Grafana y el vigilante; luego: centinela.cmd recuperar $objetivo" }
 }
@@ -1170,7 +1182,7 @@ function Invoke-Dlq {
     } catch {
         Write-Aviso 'No se pudo consultar el alert-service; se lee la DLQ directo de Kafka.'
     }
-    Write-Titulo 'Últimos mensajes de events.dlq (con sus cabeceras: tópico original y causa)'
+    Write-Titulo 'Primeros 20 mensajes de events.dlq (con sus cabeceras: tópico original y causa)'
     $salida = Invoke-Kafka @('/opt/kafka/bin/kafka-console-consumer.sh', '--topic', 'events.dlq', '--from-beginning', '--timeout-ms', '6000', '--max-messages', '20', '--property', 'print.headers=true')
     # Al agotar la espera la herramienta imprime un TimeoutException: es normal, no es un error
     $mensajes = @($salida | Where-Object { $_ -notmatch 'TimeoutException|Error processing message|terminating consumer|^\s*at |Processed a total' -and $_.Trim() })
@@ -1197,7 +1209,7 @@ function Get-RolDatos {
 function Invoke-Respaldo {
     Assert-Docker
     $rol = Get-RolDatos
-    $null = Invoke-Compose $rol (Get-Config) @('exec', '-T', 'db-backup', 'sh', '/scripts/respaldo.sh', 'ahora')
+    if ((Invoke-Compose $rol (Get-Config) @('exec', '-T', 'db-backup', 'sh', '/scripts/respaldo.sh', 'ahora')) -ne 0) { Stop-Centinela 'El respaldo falló (ver arriba).' }
     Write-Info "Respaldos en: $(Join-Path $Raiz 'backups')"
     Get-ChildItem -LiteralPath (Join-Path $Raiz 'backups') -Filter '*.dump' -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { Write-Info ('{0}  {1:N0} KB' -f $_.Name, ($_.Length / 1KB)) }
@@ -1218,7 +1230,7 @@ function Invoke-Restaurar {
     Write-Aviso "Se reemplazará la base de datos por el respaldo $archivo."
     Write-Info 'Se restaura en una base temporal y luego se intercambia: los servicios se reconectan solos.'
     if (-not (Read-SiNo '¿Continuar?' $false)) { return }
-    $null = Invoke-Compose $rol (Get-Config) @('exec', '-T', 'db-backup', 'sh', '/scripts/respaldo.sh', 'restaurar', $archivo)
+    if ((Invoke-Compose $rol (Get-Config) @('exec', '-T', 'db-backup', 'sh', '/scripts/respaldo.sh', 'restaurar', $archivo)) -ne 0) { Stop-Centinela 'La restauración falló (ver arriba); la base actual no se tocó.' }
 }
 
 # Maven dentro de un contenedor: no hace falta instalar Java ni Maven en Windows.
@@ -1251,6 +1263,7 @@ $ImagenesPropias = @('centinela/sensor-simulator:1.0.0', 'centinela/ingestion-se
 function Invoke-ExportarImagenes {
     Assert-Docker
     $archivo = if ($Objetivo) { $Objetivo } else { Join-Path $Raiz 'centinela-imagenes.tar' }
+    if (-not (Test-Path -LiteralPath $ArchivoEnv)) { Save-Env ([ordered]@{}) }   # compose necesita un .env
     $cfg = Get-Config
     Write-Titulo 'Construyendo las imágenes del proyecto'
     if ((Invoke-Compose 'UNICO' $cfg @('build')) -ne 0) { Stop-Centinela 'Falló la construcción.' }

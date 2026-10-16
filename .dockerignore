@@ -9,3 +9,5 @@ informe
 backups
 .centinela
 deploy/nodo-b/targets/generadores.json
+# Imágenes exportadas (varios GB): nunca al contexto de compilación
+*.tar

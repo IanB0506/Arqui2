@@ -14,3 +14,5 @@ deploy/nodo-b/targets/generadores.json
 backups/
 # Estado local de centinela.ps1
 .centinela/
+# Imágenes exportadas para llevar en USB (centinela.cmd exportar-imagenes)
+*.tar
