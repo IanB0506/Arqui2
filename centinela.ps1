@@ -210,8 +210,8 @@ function Get-InfoRol([string]$Rol, $Cfg) {
         'B' { return @{ Archivo = [IO.Path]::Combine($Raiz, 'deploy', 'nodo-b', 'docker-compose.yml'); Proyecto = 'centinela-nodo-b'; Perfiles = @(); Entorno = @{} } }
         default {
             $indice = if ($Rol -eq 'C') { 0 } else { 1 }
-            $total = [math]::Max(2, (Get-Generadores $Cfg).Count)
-            if ((Get-Generadores $Cfg).Count -eq 1) { $total = 1 }
+            # Solo existen dos roles generadores (C y D): con una IP, C simula las 12 zonas
+            $total = if ((Get-Generadores $Cfg).Count -le 1) { 1 } else { 2 }
             $perfiles = @()
             if (Test-Workers $Cfg) { $perfiles = @('--profile', 'workers') }
             return @{
@@ -513,6 +513,8 @@ function Get-RevisionPuertos([string[]]$Roles, $Cfg) {
 }
 
 function Find-PuertoLibre([int]$Base, [int[]]$Evitar) {
+    # 29092 y 9093 los usa Kafka por dentro (listener interno y controlador): nunca se ofrecen
+    $Evitar = @($Evitar) + @(29092, 9093)
     $rangos = Get-RangosExcluidos
     $candidatos = @()
     foreach ($salto in @(10000, 20000, 1000, 30000)) { for ($i = 0; $i -lt 20; $i++) { $candidatos += $Base + $salto + $i } }
@@ -755,7 +757,10 @@ function Invoke-Configurar {
                 $gens = @($lista)
             }
         }
-        $g = Read-Valor 'IP de los nodos generadores C y D, separadas por comas' ($gens -join ',')
+        $g = Read-Valor 'IP del nodo C (y del nodo D si existe, separadas por coma)' ($gens -join ',')
+        $nGen = @($g -split '[,; ]+' | Where-Object { $_ }).Count
+        if ($nGen -gt 2) { Stop-Centinela 'Hay como máximo dos nodos generadores (C y D): indique una o dos IP.' }
+        if ($nGen -eq 2) { Write-Info 'Con dos generadores, C simula las zonas 1-6 y D las 7-12: levante también el nodo D.' }
         foreach ($ip in @($a, $b) + @($g -split '[,; ]+' | Where-Object { $_ })) {
             if (-not (Test-IpValida $ip)) { Stop-Centinela "IP inválida: $ip" }
             if ($ip -like '127.*' -or $ip -like '169.254.*') { Stop-Centinela "La IP $ip no sirve entre PCs: use la IP de la red local (ipconfig)." }
@@ -1206,7 +1211,7 @@ function Invoke-Restaurar {
     $archivo = Split-Path -Leaf $archivo
     if (-not (Test-Path -LiteralPath (Join-Path $dir $archivo))) { Stop-Centinela "No existe $(Join-Path $dir $archivo)" }
     Write-Aviso "Se reemplazará la base de datos por el respaldo $archivo."
-    if ($rol -eq 'A') { Write-Info 'Recomendado: detener antes el nodo B (alert-service) en su PC.' }
+    Write-Info 'Se restaura en una base temporal y luego se intercambia: los servicios se reconectan solos.'
     if (-not (Read-SiNo '¿Continuar?' $false)) { return }
     $null = Invoke-Compose $rol (Get-Config) @('exec', '-T', 'db-backup', 'sh', '/scripts/respaldo.sh', 'restaurar', $archivo)
 }

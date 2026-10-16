@@ -174,8 +174,10 @@ datos justo durante la puesta al día.
 **14. Operación.** Reinicio automático de contenedores (`restart: unless-stopped`); apagado ordenado
 (el simulador y la ingesta terminan la ronda de reenvío y cierran el diario antes de salir);
 `/actuator/health/liveness` separado de la salud completa, para que Docker no reinicie un servicio
-sano solo porque Redis está caído; respaldo de la base con `pg_dump` cada 6 h (se guardan 8) y
-restauración con `centinela.cmd restaurar`.
+sano solo porque Redis está caído; respaldo de la base con `pg_dump` cada 6 h (se guardan 8; una
+base vacía no se respalda y un reinicio no rota respaldos buenos) y restauración con
+`centinela.cmd restaurar`, que restaura en una base temporal y luego la intercambia por la actual,
+sin detener los servicios.
 
 ### Pruebas realizadas en la simulación
 

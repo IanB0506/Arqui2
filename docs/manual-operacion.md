@@ -200,25 +200,35 @@ Redis o Kafka estén caídos: el proceso vive) y `/actuator/prometheus`.
 
 ## 7. Configuración
 
-Todas las propiedades se pueden sobreescribir con variables de `.env` (ver `.env.example`):
+**Variables de `.env`** (las lee `docker compose` o `centinela.cmd`; ver `.env.example`). El mismo
+`.env` sirve para todas las PCs:
 
 | Variable | Servicio | Uso |
 |---|---|---|
 | `NODE_A_IP`, `NODE_B_IP` | todos | IPs de los servidores en la LAN |
+| `GENERATOR_IPS` | nodo B, `centinela.cmd` | IP del nodo C (y del D si existe): Prometheus y reparto de zonas |
 | `*_PORT` (`INGESTION_PORT`, `ALERT_SERVICE_PORT`, …) | todos | Puertos publicados en Windows (ver `centinela.cmd puertos`) |
 | `REDIS_PASSWORD`, `DB_PASSWORD` | ingesta, correlación, alertas | Contraseñas |
 | `PLATE_HMAC_SECRET` | ingesta, alertas | Llave de seudonimización (**igual en todas las PCs**) |
 | `BUILD_TARGET` | imágenes | `prebuilt` usa los jar ya compilados (segundos, sin internet) |
 | `WORKERS` | nodo C | `true` levanta workers de ingesta y correlación en C |
-| `SIMULATOR_ZONES`, `SIMULATOR_NODE_NAME` | simulador | Zonas que simula cada nodo |
-| `CORRELATION_FP_TIMEOUT` | correlación | Plazo de corroboración (90 s por defecto) |
-| `INGESTION_ALLOW_HISTORICAL` | ingesta | Acepta eventos con más de 24 h (replays históricos) |
-| `SPOOL_TELEMETRY_MAX_AGE`, `SPOOL_TELEMETRY_MAX_SIZE` | simulador | Tope de la telemetría útil en disco (15 min / 32 MB) |
-| `SPOOL_CRITICAL_MAX_SIZE` | simulador | Tope del spool de críticos (32 MB ≈ 100 000 eventos) |
-| `WATCHDOG_*_URL`, `WATCHDOG_TIMEOUT` | simulador | Qué vigila el vigilante y con qué espera |
 | `BACKUP_INTERVAL_HOURS`, `BACKUP_KEEP` | respaldo | Cada cuánto se respalda la base (6 h) y cuántos se guardan (8) |
 
-Las reglas de correlación se editan en `correlation-engine/src/main/resources/application.yml`.
+Las zonas de cada generador (`SIMULATOR_ZONES`) las calcula `centinela.cmd` según `GENERATOR_IPS`:
+con una IP, C simula las 12; con dos, C simula 1-6 y D 7-12.
+
+**Propiedades avanzadas** (se cambian en el `application.yml` del servicio y se vuelve a compilar
+con `centinela.cmd iniciar -Compilar`):
+
+| Propiedad | Servicio | Valor por defecto |
+|---|---|---|
+| `correlation.false-positive-timeout` | correlación | Plazo de corroboración: 90 s |
+| `ingestion.allow-historical` | ingesta | Rechaza eventos con más de 24 h (activar para replays históricos) |
+| `simulator.spool.telemetry-max-age`, `telemetry-max-size` | simulador | Telemetría útil en disco: 15 min / 32 MB |
+| `simulator.spool.critical-max-size` | simulador | Spool de críticos: 32 MB (≈ 100 000 eventos) |
+| `simulator.watchdog.timeout`, `interval-ms`, `failures-to-down` | simulador | Vigilante: 3 s de espera, cada 10 s, 2 fallas para declarar caído |
+| `alerts.slo.*` | alertas | SLO: 2 s en el 95 %, frescura 10 s, sobrecarga con atraso ≥ 1 000 sostenido (`overload-lag`) |
+| Reglas de correlación (`correlation.rules`) | correlación | Ver [`correlacion.md`](correlacion.md) |
 
 ## 8. Compilar y probar
 
