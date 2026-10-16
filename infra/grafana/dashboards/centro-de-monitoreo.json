@@ -503,8 +503,8 @@
           "showAttribution": true
         },
         "basemap": {
-          "type": "default",
-          "name": "Mapa base",
+          "type": "osm-standard",
+          "name": "Mapa base (OpenStreetMap)",
           "config": {}
         },
         "layers": [
@@ -592,7 +592,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT updated_at AS \"Hora\", severity AS \"Severidad\",\nalert_type AS \"Tipo\", zone_name AS \"Zona\", status AS \"Estado\", round(confidence::numeric, 2) AS \"Confianza\",\nlatency_ms AS \"Latencia (ms)\", plate_masked AS \"Placa\", revision AS \"Rev.\"\nFROM v_alerts WHERE $__timeFilter(updated_at)\nORDER BY (status IN ('NEW','ESCALATED','UPDATED') AND severity = 'CRITICAL') DESC, updated_at DESC LIMIT 100",
+          "rawSql": "SELECT updated_at AS \"Hora\", severity AS \"Severidad\",\nalert_type AS \"Tipo\", zone_name AS \"Zona\", status AS \"Estado\", round(confidence::numeric, 2) AS \"Confianza\",\nCASE WHEN alert_type = 'POSIBLE_FALSO_POSITIVO' THEN NULL ELSE latency_ms END AS \"Latencia (ms)\", plate_masked AS \"Placa\", revision AS \"Rev.\"\nFROM v_alerts WHERE $__timeFilter(updated_at)\nORDER BY (status IN ('NEW','ESCALATED','UPDATED') AND severity = 'CRITICAL') DESC, updated_at DESC LIMIT 100",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"

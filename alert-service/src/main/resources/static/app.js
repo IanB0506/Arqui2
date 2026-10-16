@@ -50,9 +50,12 @@ function render(freshId) {
     const meta = node.querySelector('.meta');
     const parts = [`Estado: ${STATUS_LABELS[a.status] || a.status}`, `Confianza: ${(a.confidence ?? 0).toFixed(2)}`,
       `Revision ${a.revision}`, `Regla ${a.ruleId}`];
-    if (a.latencyMs != null) parts.push(`Latencia ${a.latencyMs} ms`);
+    const fp = a.alertType === 'POSIBLE_FALSO_POSITIVO';
+    // un posible falso positivo se clasifica al vencer el plazo de corroboracion (90 s): no es latencia
+    if (a.latencyMs != null) parts.push(fp ? `Clasificado tras ${Math.round(a.latencyMs / 1000)} s sin corroborar`
+      : `Latencia ${a.latencyMs} ms`);
     // (un posible falso positivo espera 90 s por diseno: no "llega tarde")
-    if (a.latencyMs != null && a.latencyMs > LATE_MS && a.zoneId !== 0 && a.alertType !== 'POSIBLE_FALSO_POSITIVO')
+    if (a.latencyMs != null && a.latencyMs > LATE_MS && a.zoneId !== 0 && !fp)
       parts.push(`LLEGO ${Math.round(a.latencyMs / 1000)} s TARDE`);
     if (state.missed.has(a.alertId)) parts.push('Recibida al reconectar');
     if (a.plateMasked) parts.push(`Placa ${a.plateMasked}`);
