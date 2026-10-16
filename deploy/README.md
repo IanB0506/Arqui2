@@ -54,9 +54,9 @@ coincidir.
 centinela.cmd configurar
 ```
 
-El script reconoce qué nodo es la PC comparando su IP con las del `.env` y solo lo confirma. En
-los nodos C y D reparte las zonas solo (C: 1-6, D: 7-12). En el nodo B escribe la lista de
-generadores para Prometheus.
+Elija la opción 2 (varias PCs): el script sugiere qué nodo es la PC comparando su IP con las del
+`.env` y usted lo confirma. Las zonas se reparten solas: con un solo generador, C simula las 12;
+con dos, C simula 1-6 y D 7-12. En el nodo B escribe la lista de generadores para Prometheus.
 
 > Si en alguna PC el script tuvo que cambiar un puerto, lo avisa: hay que volver a copiar ese
 > `.env` a las demás PCs.
@@ -70,7 +70,8 @@ centinela.cmd iniciar
 ```
 
 El script espera a que el nodo quede sano. En B, C y D comprueba antes que llega a Kafka del nodo
-A, y si no llega, dice si es la IP o el firewall.
+A; si no llega, avisa (revise la IP de A en `.env`, que A esté iniciado y su firewall) y continúa,
+porque los servicios reintentan solos.
 
 La primera vez se construyen las imágenes con Maven dentro de Docker (necesita internet y unos
 minutos). Si el laboratorio no tiene internet, ver la sección 6.
@@ -101,8 +102,8 @@ todas las instancias de cada grupo de consumidores. Para verlo:
 centinela.cmd particiones
 ```
 
-La columna `CLIENT-ID` indica en qué nodo está cada consumidor (por ejemplo
-`correlation-engine-nodo-b` y `correlation-engine-nodo-c`, con 6 particiones cada uno). Si un
+La columna `CLIENT-ID` indica en qué nodo está cada consumidor: seis `correlation-engine-nodo-b-*`
+y seis `correlation-engine-nodo-c-*`, con una partición cada uno (6 + 6 por máquina). Si un
 worker se apaga, Kafka reasigna sus particiones a las instancias que quedan en unos segundos.
 
 ## 5. Demostrar la tolerancia a fallos
@@ -117,7 +118,7 @@ centinela.cmd recuperar B
 Mientras B está caído, el **vigilante** de los nodos C/D lo marca como caído (y lo registra en su
 log). Con los *workers* la detección sigue funcionando. Al volver, la consola recupera las alertas
 que se perdió y marca las que llegaron tarde. El detalle de cada caso está en
-`docs/adr/ADR-006-estrategia-de-tolerancia-a-fallos.md`.
+[`docs/adr/ADR-006-resiliencia-y-tolerancia-a-fallos.md`](../docs/adr/ADR-006-resiliencia-y-tolerancia-a-fallos.md).
 
 ## 6. Laboratorio sin internet
 

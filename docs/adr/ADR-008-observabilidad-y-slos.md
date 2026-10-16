@@ -43,7 +43,7 @@ de SLO en Java** que actúa ante los incumplimientos.
 | **SLO-1 Latencia de alerta** | Tiempo entre el evento que completa la correlación y la alerta **guardada y visible** en la consola, para avisos HIGH/CRITICAL (primer aviso y agravamientos) | **95 % por debajo de 2 s** | 5 min móviles |
 | **SLO-2 Pérdida de eventos críticos** | Botones de pánico y reportes en estado `lost` | **0** | Siempre |
 | **SLO-3 Frescura de datos** | p95 del tiempo entre el evento y su fila guardada en TimescaleDB | **< 10 s** | 1 min |
-| **SLO-4 Rezago de procesamiento** | Lag del grupo `correlation` en Kafka | < 1 000 mensajes sostenidos | 5 min |
+| **SLO-4 Rezago de procesamiento** | Atraso total de los grupos `ingestion`, `correlation`, `event-store` y `alert-store` en Kafka | < 1 000 mensajes (incumple si es ≥ 1 000 y no baja en dos mediciones seguidas) | 2 mediciones de 30 s |
 
 ### Qué ocurre cuando se incumplen
 

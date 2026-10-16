@@ -7,7 +7,8 @@ Bash: Docker Desktop corre los contenedores por su cuenta.
 ## 1. Requisitos
 
 - **Windows 10/11** de 64 bits con **Docker Desktop** (motor WSL 2, que el instalador configura solo).
-- 8 GB de RAM libres para correr todo en una sola PC; 4 GB en cada PC si se reparte en varias.
+- 8 GB de RAM libres para correr todo en una sola PC; si se reparte, 8 GB en los nodos A y B y 4 GB
+  en C/D (`centinela.cmd requisitos` revisa la memoria asignada a Docker).
 - No hace falta Java ni Maven: `centinela.cmd compilar` compila dentro de Docker. (Si se prefiere
   compilar fuera, el proyecto trae Maven Wrapper: `mvnw.cmd install`, con Java 21.)
 - El repositorio **fuera de OneDrive** de preferencia (OneDrive bloquea archivos mientras sincroniza).
@@ -20,7 +21,7 @@ Desde la carpeta del proyecto, en *Símbolo del sistema* o PowerShell (o con dob
 `centinela.cmd`, que abre un menú):
 
 ```bat
-centinela.cmd configurar        :: elige "una sola PC", genera .env con contraseñas propias
+centinela.cmd configurar        :: elige "una sola PC" y genera .env (con una llave HMAC propia)
 centinela.cmd iniciar -Compilar :: compila (la primera vez tarda unos minutos) y levanta todo
 centinela.cmd estado            :: salud de cada servicio
 centinela.cmd abrir             :: consola del operador, Grafana y el vigilante en el navegador
@@ -34,7 +35,8 @@ centinela.cmd abrir             :: consola del operador, Grafana y el vigilante 
 | API del simulador | http://localhost:8080/api/simulator/status | sin autenticación (red interna) |
 | Prometheus | http://localhost:9090 | — |
 
-Los puertos son los de `.env` (`ALERT_SERVICE_PORT`, `GRAFANA_PORT`, etc.). Si se cambiaron, las
+`configurar` genera una llave HMAC propia, pero las contraseñas quedan las de `.env.example`:
+cámbielas en `.env` antes de la demo. Los puertos son los de `.env` (`ALERT_SERVICE_PORT`, `GRAFANA_PORT`, etc.). Si se cambiaron, las
 URLs cambian igual; `centinela.cmd abrir` siempre usa los correctos.
 
 ### Error "Se intentó acceder a un socket de una forma no permitida por sus permisos de acceso"
@@ -74,8 +76,9 @@ Cada paso corresponde a un criterio de evaluación de la sección 10.2.
    on-premise (ADR-001).
 2. `centinela.cmd estado` en el nodo A: Kafka, TimescaleDB y Redis aparecen *healthy*.
 3. En el nodo B: abrir http://IP_B:9090/targets. Todos los servicios aparecen UP.
-4. `centinela.cmd particiones`: `correlation-engine-nodo-b` y `correlation-engine-nodo-c` con 6
-   particiones cada uno (Kafka reparte la carga entre máquinas).
+4. `centinela.cmd particiones`: seis consumidores `correlation-engine-nodo-b-*` y seis
+   `correlation-engine-nodo-c-*`, con una partición cada uno: 6 + 6 por máquina (Kafka reparte la
+   carga entre máquinas).
 
 ### 4.2 Flujo de eventos y procesamiento en tiempo real (5 %)
 
@@ -127,7 +130,7 @@ Si la red del laboratorio falla, todo el sistema corre en una sola laptop (`cent
 
 | Grupo | Comando | Qué hace |
 |---|---|---|
-| Preparar | `configurar [-Nodo UNICO\|A\|B\|C\|D]` | Asistente: roles de esta PC, IPs, contraseñas → `.env` |
+| Preparar | `configurar [-Nodo UNICO\|A\|B\|C\|D]` | Asistente: roles de esta PC, IPs, workers y llave HMAC → `.env` |
 | | `requisitos` | Docker Desktop, memoria de la VM, relojes, OneDrive |
 | | `puertos [-Arreglar]` | Revisa puertos reservados (10013) u ocupados; con `-Arreglar` elige otros |
 | | `firewall [-Quitar]` | Abre (o cierra) en el firewall los puertos de este nodo |
@@ -253,4 +256,4 @@ Con Java 21 instalado también sirve `mvnw.cmd install` (descarga Maven la prime
 | Consola: "Sin conexión con el servidor" | alert-service (nodo B) caído o red | El vigilante (`/vigilante.html`) dice qué cayó; al volver, la consola recupera lo perdido |
 | Alerta `SLO_INCUMPLIDO` HIGH ("Degradación del servicio") | Sobrecarga real: atraso grande que no baja | Levantar workers en C/D (`WORKERS=true` y `centinela.cmd iniciar`) |
 | Alerta `SLO_INCUMPLIDO` MEDIUM ("Puesta al día tras una caída") | Alertas tardías por una caída ya superada | Ninguna: es informativa, no se activa el modo degradado |
-| Mensajes en la DLQ | Eventos inválidos o fallas largas de Redis/BD | `centinela.cmd dlq`; los transitorios se reprocesan solos cada 5 min |
+| Mensajes en la DLQ | Eventos inválidos (PERMANENTE) o errores no clasificados (DESCONOCIDO); las caídas de Redis o la base no llegan a la DLQ | `centinela.cmd dlq`; los DESCONOCIDO se reprocesan solos cada 5 min (hasta 3 veces) |

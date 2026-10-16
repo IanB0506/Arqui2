@@ -912,6 +912,11 @@ function Invoke-Iniciar {
     Write-Titulo "Iniciando: $($roles -join ', ')"
     if (-not (Repair-Puertos $roles $cfg ([bool]$Arreglar))) { Stop-Centinela 'Hay puertos sin resolver. Use "centinela.cmd puertos -Arreglar".' }
     $cfg = Get-Config
+    # Con BUILD_TARGET=prebuilt las imágenes copian los jar ya compilados: -Compilar los recompila antes
+    if ($Compilar -and ([string]$cfg['BUILD_TARGET']).Trim() -eq 'prebuilt' -and @($roles | Where-Object { $_ -ne 'A' }).Count -gt 0) {
+        Invoke-CompilarJar
+        $cfg = Get-Config
+    }
     foreach ($rol in $roles) {
         if ($rol -in @('B', 'C', 'D') -and $roles -notcontains 'A') {
             $ipA = $cfg['NODE_A_IP']

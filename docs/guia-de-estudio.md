@@ -196,8 +196,9 @@ elección" (sección 4).
      de consumidores).
 5. *¿Qué pasa si se cae Kafka?*
    - Los eventos críticos (pánico, reportes, disparos) se escriben en disco **antes** de enviarse y
-     se reenvían al volver; lo mismo hace el gateway de la app (responde 202 `EN_COLA`). Lo probamos:
-     0 pérdidas, también con un `kill -9` del simulador en plena caída.
+     se reenvían al volver. El gateway de la app los guarda en disco si Kafka no confirma en 3 s y
+     responde 202 `EN_COLA`. Lo probamos: 0 pérdidas, también con un `kill -9` del simulador en plena
+     caída.
    - La telemetría útil (placas, excesos, sonidos relevantes) se guarda con tope de 15 minutos; las
      lecturas normales se pierden, y eso es aceptable según la política del ADR-006.
 6. *¿Por qué 12 particiones?* Es el máximo de consumidores en paralelo por grupo: 2 máquinas × 6 hilos.
@@ -219,7 +220,8 @@ elección" (sección 4).
 **Tareas periódicas (ADR-004)**
 
 10. *¿Por qué no Airflow?*
-    - Son 5 tareas cortas e independientes, sin dependencias entre sí.
+    - Son 7 tareas cortas e independientes, sin dependencias entre sí (SLO, retención, expiración,
+      calidad de reglas, lista de placas, su revisión cada 15 s y el reproceso de la DLQ).
     - Airflow agrega 4 a 5 contenedores y 2 a 4 GB de RAM, y obliga a escribir las tareas en Python.
     - Usamos Spring Scheduler + **ShedLock**, que garantiza que cada tarea corra una sola vez aunque
       haya varias instancias.
@@ -292,9 +294,10 @@ elección" (sección 4).
 **Correlación (ADR-009)**
 
 23. *Expliquen la fila 1 de la tabla 2.4.* Pánico ROBO en la Zona 4 (+0,40), exceso de velocidad de
-    85 km/h en la misma zona (+0,30): 0,70, alerta HIGH. Placa XYZ123 a 87 km/h en una cámara de la
-    misma zona (+0,20): 0,90, CRITICAL. La placa queda sospechosa: si aparece en la Zona 8, se genera
-    `VEHICULO_EN_FUGA`.
+    85 km/h en la misma zona (+0,30) y placa XYZ123 a alta velocidad en una cámara de la misma zona
+    (+0,20): 0,90, CRITICAL. Con el escenario `tabla-2-4` (llega primero la placa) sale directo en
+    CRITICAL; con `robo-en-curso` (llega primero la velocidad) se ve escalar: 0,70 HIGH y luego 0,90
+    CRITICAL. La placa queda sospechosa: si aparece en la Zona 8, se genera `VEHICULO_EN_FUGA`.
 24. *¿Y la fila 2?* El pánico de la Zona 10 suma 0,40, menor que 0,70. Queda pendiente 90 s; como no
     llega evidencia, se clasifica como `POSIBLE_FALSO_POSITIVO`, con severidad baja, para que el
     operador lo verifique con una llamada.

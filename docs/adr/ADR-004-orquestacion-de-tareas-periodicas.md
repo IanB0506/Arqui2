@@ -19,9 +19,11 @@ Airflow a esta escala?** Las tareas que necesita el sistema son:
 | Retención de placas | Diaria (02:15) | Borra seudónimos de placas de más de 30 días (ADR-007) |
 | Expiración de alertas | Cada 5 min | Pasa a EXPIRED las alertas que nadie atendió en 2 h |
 | Calidad de reglas | Cada hora | Calcula la precisión por regla y zona y ajusta los umbrales del motor (ADR-009) |
-| Sincronización de la lista de placas | Cada 10 min y al iniciar | Copia los seudónimos de PostgreSQL a Redis |
+| Sincronización de la lista de placas | Cada 10 min | Copia los seudónimos de PostgreSQL a Redis |
+| Revisión de la lista de placas | Cada 15 s | Si Redis se reinició vacío, recarga la lista de inmediato (ADR-006) |
+| Reproceso de la DLQ | Cada 5 min | Reinyecta lo que falló por causas no permanentes, hasta 3 veces (ADR-006) |
 
-Son **5 tareas independientes, cortas (de milisegundos a segundos) y sin dependencias entre sí**. No
+Son **7 tareas independientes, cortas (de milisegundos a segundos) y sin dependencias entre sí**. No
 hay flujos de varios pasos, reintentos encadenados ni reprocesos de fechas pasadas (*backfill*).
 Restricción adicional: el curso exige programar en Java, y Airflow solo acepta flujos (DAGs) en Python.
 

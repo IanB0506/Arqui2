@@ -127,7 +127,7 @@ en C/D). Resumen de lo que ocurre ante cada falla (detalle y mediciones en
 | Falla | Qué hace el sistema | Qué se pierde |
 |---|---|---|
 | Cae el nodo B | Los workers de C siguen detectando; Kafka guarda lo demás. El **vigilante** de C lo anuncia en ~16 s y la consola avisa "sin conexión"; al volver, recupera y destaca lo perdido | Nada: solo retraso |
-| Cae el nodo A | Simulador y gateway guardan en disco (*write-ahead*) los críticos y la telemetría útil de los últimos 15 min, y los reenvían al volver. La lista de placas se recarga sola en ~20 s | Lecturas de velocidad normales, ruido ambiental y la memoria de corto plazo de Redis |
+| Cae el nodo A | El simulador escribe en disco por adelantado (*write-ahead*) los críticos y guarda la telemetría útil (últimos 15 min) si el envío falla; el gateway de la app guarda en disco con `fsync` lo que Kafka no confirma en 3 s (responde 202 solo cuando el evento ya es durable). Todo se reenvía al volver. La lista de placas se recarga sola en ~20 s | Lecturas de velocidad normales, ruido ambiental y la memoria de corto plazo de Redis |
 | Redis o la base caen unos minutos | Reintentos sin límite con espera exponencial (tope 30 s); nada de eso va a la DLQ | Nada |
 | Mensaje inválido | DLQ inmediata con la clase de falla; el resto del flujo sigue | Ese mensaje queda apartado para análisis |
 | Muere un proceso a mitad de una alerta | Alertas con ID determinista y persistencia idempotente: el reproceso produce la misma alerta, sin duplicarla | Nada |

@@ -90,8 +90,10 @@ recompilar; basta con reiniciar el servicio.
 | Disparo o vidrios rotos (probabilidad ≥ 0,6) | +0,15 |
 | Otra persona reporta robo o presiona pánico (máximo 2) | +0,10 c/u |
 
-Ejemplo de la tabla 2.4: pánico (0,40) + 85 km/h (0,30) = **0,70, HIGH**; + placa XYZ123 a 87 km/h
-(0,20) = **0,90, CRITICAL** (escala).
+Ejemplo de la tabla 2.4: pánico (0,40) + 85 km/h (0,30) + placa XYZ123 a alta velocidad (0,20) =
+**0,90, CRITICAL**. Con el escenario `tabla-2-4` la placa llega antes que la velocidad y la alerta sale
+directo en CRITICAL; con `robo-en-curso` llega primero la velocidad: **0,70, HIGH**, y al llegar la
+placa a 87 km/h escala a **0,90, CRITICAL**.
 
 ### R2 - Accidente vial iniciado por un reporte (`ACCIDENTE_VIAL`)
 

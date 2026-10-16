@@ -42,7 +42,7 @@ constancia de ellas en la sección final.
 | Mensajes inválidos | Descartarlos y registrarlos en el log | Enviarlos a una **DLQ** con la causa | **B**: se pueden revisar y reprocesar |
 | Reintentos | Un número fijo para todo error | **Según la clase de falla** (transitoria, permanente, desconocida) | **B**: una caída de Redis de 5 minutos no debe mandar alertas a la DLQ |
 | Kafka caído, en el productor | Guardar en disco solo lo que ya falló | **Escritura anticipada (*write-ahead*)**: a disco antes de enviar | **B**: no hay ventana en que un crítico viva solo en memoria |
-| Qué guardar si cae Kafka | Solo los críticos | **Críticos sin tope + telemetría útil con tope** | **B**: sin la telemetría, un robo durante la caída se clasificaba como falso positivo |
+| Qué guardar si cae Kafka | Solo los críticos | **Críticos sin vencimiento (tope 32 MB) + telemetría útil con tope de 15 min** | **B**: sin la telemetría, un robo durante la caída se clasificaba como falso positivo |
 | Garantía de entrega | Como máximo una vez (*at-most-once*) | **Al menos una vez + deduplicación + IDs deterministas** | **B** |
 | Estado de la correlación | En la memoria de cada proceso | **En Redis compartido** | **B**: cualquier instancia puede reemplazar a otra |
 | Detección de la caída de B | Que alguien note que la consola no carga | **Vigilante en el nodo C** + aviso en la consola | **B** |
@@ -59,7 +59,7 @@ constancia de ellas en la sección final.
 | Telemetría útil durante una caída de Kafka: todas las placas (LPR), excesos de velocidad, contravía y sonidos relevantes | Se conserva la de los **últimos 15 min** (tope 32 MB) | Spool de telemetría: vence a los 15 min porque más vieja ya no corrobora nada (ventanas de 15 min); si se llena, se descarta la más antigua |
 | Lecturas de velocidad normales y ruido ambiental durante una caída de Kafka | Se pierden | No participan en ninguna regla; guardarlas llenaría el disco sin beneficio |
 | Lecturas de velocidad **normales** en modo degradado (sobrecarga real) | Se conserva 1 de cada 10 | Muestreo en la ingesta (ADR-008) |
-| Cualquier evento ya aceptado por Kafka | **0** | Retención de 72 h, offset confirmado solo después de procesar y reintentos sin límite para fallas transitorias |
+| Cualquier evento ya aceptado por Kafka | **0** (mientras la caída del consumidor dure menos que la retención) | Retención de 24 h en los topics crudos y 72 h en `events.normalized`, offset confirmado solo después de procesar y reintentos sin límite para fallas transitorias |
 | Memoria de corto plazo (ventanas, incidentes abiertos) si se reinicia Redis | Se pierde | Aceptado: Redis corre sin persistencia por rendimiento. La lista de placas robadas, que sí importa, se reconstruye sola desde la base |
 
 ### Mecanismos implementados
@@ -85,7 +85,7 @@ en un diario en disco **antes** de enviarlo y se marca como confirmado cuando Ka
 
 | Spool | Qué guarda | Tope | Al llenarse |
 |---|---|---|---|
-| `critical.wal` (simulador) | Pánico, reporte ciudadano, disparo/explosión ≥ 0,5 | 32 MB, sin vencimiento | Rechaza lo nuevo, lo registra y lo cuenta (`simulator_spool_rejected_total`) |
+| `critical.wal` (simulador) | Pánico, reporte ciudadano, disparo/explosión ≥ 0,5 | 32 MB, sin vencimiento | Rechaza lo nuevo y lo registra en el log; se ve como `rechazadosPorTope` en `/api/simulator/spool` y el evento perdido cuenta en `simulator_events_sent_total{result="lost"}` |
 | `telemetry.wal` (simulador) | LPR, excesos, contravía, sonidos relevantes | 32 MB o 15 min | Descarta lo más antiguo |
 | `gateway.wal` (ingesta) | Pánicos y reportes de la app | 32 MB, sin vencimiento | Responde 503 para que la app reintente |
 
@@ -95,8 +95,8 @@ en los tres consumidores):
 | Clase | Ejemplos | Reintentos | Destino final |
 |---|---|---|---|
 | **PERMANENTE** | JSON inválido, campos faltantes, zona inexistente, timestamp en el futuro | Ninguno | DLQ de inmediato |
-| **TRANSITORIA** | Kafka, Redis o la base no responden (`SQLState 08*`/`57P*`, conexión rechazada, *timeout*) | **Sin límite**, con espera exponencial de 1 s a 30 s | Ninguno: el mensaje espera en Kafka hasta que vuelva la dependencia |
-| **DESCONOCIDA** | Cualquier otro error | 4 | DLQ |
+| **TRANSITORIO** | Kafka, Redis o la base no responden (`SQLState 08*`/`57P*`, conexión rechazada, *timeout*) | **Sin límite**, con espera exponencial de 1 s a 30 s | Ninguno: el mensaje espera en Kafka hasta que vuelva la dependencia |
+| **DESCONOCIDO** | Cualquier otro error | 4 | DLQ |
 
 Mientras reintenta, el consumidor no avanza el offset, así que el mensaje no se pierde ni se salta.
 Los reintentos se registran cada 10 intentos para no inundar el log.
