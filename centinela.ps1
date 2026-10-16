@@ -53,6 +53,22 @@ $DirLocal = Join-Path $Raiz '.centinela'
 $ArchivoLocal = Join-Path $DirLocal 'local.json'
 $EsWindows = ($env:OS -eq 'Windows_NT')
 $GrupoFirewall = 'Centinela Urbano'
+$global:LASTEXITCODE = 0   # con StrictMode, leerla antes de que corra un programa externo da error
+
+# Ruta de docker.exe. Se busca CON extensión a propósito: si en el PATH hay antes un archivo "docker"
+# sin extensión (p. ej. creado por error en C:\Windows\System32), PowerShell intentaría abrirlo como
+# documento ("¿Con qué aplicación desea abrir 'docker'?") en lugar de ejecutar Docker.
+$DockerExe = 'docker'
+if ($EsWindows) {
+    $DockerExe = $null
+    $c = Get-Command -Name 'docker.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { $DockerExe = $c.Source }
+    else {
+        foreach ($d in @((Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'), (Join-Path $env:USERPROFILE '.docker\bin\docker.exe'))) {
+            if (Test-Path -LiteralPath $d) { $DockerExe = $d; break }
+        }
+    }
+}
 
 # Puertos publicados en la PC y su valor por defecto (los mismos de los docker-compose)
 $PuertosPorDefecto = [ordered]@{
@@ -251,17 +267,17 @@ function Get-VariablesPuerto([string]$Rol, $Cfg) {
 # Docker
 # =============================================================================================
 function Test-DockerCorriendo {
-    $v = & docker info --format '{{.ServerVersion}}' 2>$null
+    $v = & $DockerExe info --format '{{.ServerVersion}}' 2>$null
     return ($LASTEXITCODE -eq 0 -and $v)
 }
 
 function Assert-Docker {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        Stop-Centinela 'No se encontró Docker. Instale Docker Desktop (https://www.docker.com/products/docker-desktop/) y vuelva a intentar.'
+    if (-not $DockerExe -or -not (Get-Command $DockerExe -ErrorAction SilentlyContinue)) {
+        Stop-Centinela 'No se encontró Docker. Instale Docker Desktop (https://www.docker.com/products/docker-desktop/) y vuelva a intentar (si lo acaba de instalar, abra una terminal nueva).'
     }
     if (Test-DockerCorriendo) { return }
     Write-Aviso 'Docker Desktop no está corriendo; intento abrirlo...'
-    & docker desktop start 2>$null | Out-Null
+    & $DockerExe desktop start 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0 -and $EsWindows) {
         foreach ($exe in @((Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'), (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'))) {
             if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe; break }
@@ -277,7 +293,7 @@ function Assert-Docker {
 # Diferencia en segundos entre el reloj de Windows y el de la VM de Docker (se atrasa tras suspender la PC)
 function Get-DesfaseVm {
     $antes = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $vm = & docker run --rm --entrypoint date redis:7.4-alpine +%s 2>$null
+    $vm = & $DockerExe run --rm --entrypoint date redis:7.4-alpine +%s 2>$null
     $despues = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     if ($LASTEXITCODE -ne 0 -or -not ($vm -match '^\d+$')) { return $null }
     return [math]::Round([double]$vm - (($antes + $despues) / 2000.0), 1)
@@ -319,7 +335,7 @@ function Invoke-Compose([string]$Rol, $Cfg, [string[]]$Argumentos) {
     $previos = @{}
     foreach ($k in $info.Entorno.Keys) { $previos[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $info.Entorno[$k]) }
     try {
-        & docker @($base + $Argumentos) | Out-Host
+        & $DockerExe @($base + $Argumentos) | Out-Host
         return $LASTEXITCODE
     } finally {
         foreach ($k in $previos.Keys) { [Environment]::SetEnvironmentVariable($k, $previos[$k]) }
@@ -328,7 +344,7 @@ function Invoke-Compose([string]$Rol, $Cfg, [string[]]$Argumentos) {
 
 function Get-ComposeServicios([string]$Rol, $Cfg) {
     $info = Get-InfoRol $Rol $Cfg
-    $salida = & docker compose --env-file $ArchivoEnv -f $info.Archivo -p $info.Proyecto ps --all --format json 2>$null
+    $salida = & $DockerExe compose --env-file $ArchivoEnv -f $info.Archivo -p $info.Proyecto ps --all --format json 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $salida) { return @() }
     $texto = ($salida -join "`n").Trim()
     if ($texto.StartsWith('[')) { return @($texto | ConvertFrom-Json) }
@@ -336,7 +352,7 @@ function Get-ComposeServicios([string]$Rol, $Cfg) {
 }
 
 function Get-ContenedorConPuerto([int]$Puerto) {
-    $nombres = & docker ps --filter "publish=$Puerto" --format '{{.Names}}' 2>$null
+    $nombres = & $DockerExe ps --filter "publish=$Puerto" --format '{{.Names}}' 2>$null
     if ($LASTEXITCODE -ne 0) { return $null }
     return ($nombres | Select-Object -First 1)
 }
@@ -836,12 +852,18 @@ function Invoke-Requisitos {
         if ($os -and [int]$os.BuildNumber -lt 19045) { Write-Aviso 'Docker Desktop pide Windows 10 22H2 (19045) o Windows 11.' }
     }
     Assert-Docker
-    $tipo = & docker info --format '{{.OSType}}' 2>$null
+    if ($EsWindows) {
+        foreach ($f in @(Get-Command -Name 'docker' -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -and -not [IO.Path]::GetExtension($_.Source) })) {
+            Write-Aviso "Hay un archivo 'docker' sin extensión en $($f.Source): no es de Docker y hace que Windows pregunte con qué abrirlo."
+            Write-Info  '       Este script ya lo evita (usa docker.exe), pero conviene renombrarlo o borrarlo (requiere administrador).'
+        }
+    }
+    $tipo = & $DockerExe info --format '{{.OSType}}' 2>$null
     if ($tipo -eq 'linux') { Write-Ok 'Docker Desktop en modo de contenedores Linux' }
     else { Write-Fallo 'Docker Desktop está en modo de contenedores Windows: clic derecho en el ícono > "Switch to Linux containers".' }
-    $vc = (& docker compose version --short 2>$null) -replace '^v', ''
+    $vc = (& $DockerExe compose version --short 2>$null) -replace '^v', ''
     if ($vc -and [int]($vc.Split('.')[0]) -ge 2) { Write-Ok "Docker Compose $vc" } else { Write-Fallo 'Falta Docker Compose v2 (viene con Docker Desktop actualizado).' }
-    $memBytes = & docker info --format '{{.MemTotal}}' 2>$null
+    $memBytes = & $DockerExe info --format '{{.MemTotal}}' 2>$null
     $memGb = [math]::Round(([double]$memBytes) / 1GB, 1)
     $roles = Get-Roles
     $necesaria = 0
@@ -1155,7 +1177,7 @@ function Invoke-Kafka([string[]]$Argumentos) {
         # Desde cualquier otra PC: un contenedor desechable con las herramientas de Kafka
         $cmd = @('run', '--rm', 'apache/kafka:3.9.1') + $Argumentos + @('--bootstrap-server', ('{0}:{1}' -f $cfg['NODE_A_IP'], $cfg['KAFKA_PORT']))
     }
-    return @(& docker @cmd 2>&1 | ForEach-Object { "$_" })
+    return @(& $DockerExe @cmd 2>&1 | ForEach-Object { "$_" })
 }
 
 function Invoke-Particiones {
@@ -1237,7 +1259,7 @@ function Invoke-Restaurar {
 # El volumen centinela-m2 guarda las dependencias descargadas entre una ejecución y otra.
 function Invoke-Maven([string[]]$Argumentos) {
     Assert-Docker
-    & docker run --rm -v "${Raiz}:/src" -v 'centinela-m2:/root/.m2' -w /src maven:3.9.9-eclipse-temurin-21 mvn -B @Argumentos | Out-Host
+    & $DockerExe run --rm -v "${Raiz}:/src" -v 'centinela-m2:/root/.m2' -w /src maven:3.9.9-eclipse-temurin-21 mvn -B @Argumentos | Out-Host
     return $LASTEXITCODE
 }
 
@@ -1267,9 +1289,9 @@ function Invoke-ExportarImagenes {
     $cfg = Get-Config
     Write-Titulo 'Construyendo las imágenes del proyecto'
     if ((Invoke-Compose 'UNICO' $cfg @('build')) -ne 0) { Stop-Centinela 'Falló la construcción.' }
-    foreach ($i in $ImagenesBase) { & docker pull $i | Out-Host }
+    foreach ($i in $ImagenesBase) { & $DockerExe pull $i | Out-Host }
     Write-Titulo "Guardando en $archivo"
-    & docker save -o $archivo @($ImagenesPropias + $ImagenesBase) | Out-Host
+    & $DockerExe save -o $archivo @($ImagenesPropias + $ImagenesBase) | Out-Host
     if ($LASTEXITCODE -eq 0) { Write-Ok "Listo: copie $archivo a cada PC y ejecute 'centinela.cmd importar-imagenes'." }
 }
 
@@ -1277,7 +1299,7 @@ function Invoke-ImportarImagenes {
     Assert-Docker
     $archivo = if ($Objetivo) { $Objetivo } else { Join-Path $Raiz 'centinela-imagenes.tar' }
     if (-not (Test-Path -LiteralPath $archivo)) { Stop-Centinela "No existe $archivo" }
-    & docker load -i $archivo | Out-Host
+    & $DockerExe load -i $archivo | Out-Host
 }
 
 # Menú para el doble clic en centinela.cmd
