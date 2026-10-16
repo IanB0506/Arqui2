@@ -853,8 +853,13 @@ function Invoke-Requisitos {
     }
     Assert-Docker
     if ($EsWindows) {
-        foreach ($f in @(Get-Command -Name 'docker' -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -and -not [IO.Path]::GetExtension($_.Source) })) {
-            Write-Aviso "Hay un archivo 'docker' sin extensión en $($f.Source): no es de Docker y hace que Windows pregunte con qué abrirlo."
+        # Los archivos sin extensión de la carpeta de Docker son suyos (para Git Bash/WSL): solo se avisa de los de otras carpetas
+        $dirDocker = if ($DockerExe) { Split-Path -Parent $DockerExe } else { '' }
+        $ajenos = @(Get-Command -Name 'docker' -All -ErrorAction SilentlyContinue | Where-Object {
+                $_.Source -and -not [IO.Path]::GetExtension($_.Source) -and (Split-Path -Parent $_.Source) -ne $dirDocker -and
+                $_.Source -notlike (Join-Path $env:ProgramFiles 'Docker\*') })
+        foreach ($f in $ajenos) {
+            Write-Aviso "Hay un archivo 'docker' sin extensión en $($f.Source): no viene de Docker y hace que Windows pregunte con qué abrirlo."
             Write-Info  '       Este script ya lo evita (usa docker.exe), pero conviene renombrarlo o borrarlo (requiere administrador).'
         }
     }
