@@ -199,18 +199,32 @@ public class EventFactory {
         };
     }
 
+    /**
+     * Punto al azar cerca del centroide que sigue perteneciendo a la zona: el geocercado (centroide mas
+     * cercano) lo resuelve a esa misma zona, asi un reporte ciudadano nunca cae en la zona vecina.
+     */
     private static double[] randomPointIn(Zone zone, double spread) {
-        return new double[]{
-                zone.latitude() + random().nextDouble(-spread, spread),
-                zone.longitude() + random().nextDouble(-spread, spread)};
+        for (int i = 0; i < 20; i++) {
+            double lat = zone.latitude() + random().nextDouble(-spread, spread);
+            double lon = zone.longitude() + random().nextDouble(-spread, spread);
+            if (ZoneCatalog.nearest(lat, lon).id() == zone.id()) {
+                return new double[]{lat, lon};
+            }
+        }
+        return new double[]{zone.latitude(), zone.longitude()};
     }
 
-    /** Las camaras son fijas: su posicion se deriva del id para que siempre sea la misma. */
+    /** Las camaras son fijas: su posicion se deriva del id para que siempre sea la misma (y dentro de su zona). */
     private static double[] fixedSensorPoint(Zone zone, String sensorId) {
         int h = Math.abs(sensorId.hashCode());
-        return new double[]{
-                zone.latitude() + ((h % 100) - 50) / 10000.0,
-                zone.longitude() + (((h / 100) % 100) - 50) / 10000.0};
+        double dLat = ((h % 100) - 50) / 10000.0;
+        double dLon = (((h / 100) % 100) - 50) / 10000.0;
+        for (int i = 0; i < 4; i++, dLat /= 2, dLon /= 2) {
+            if (ZoneCatalog.nearest(zone.latitude() + dLat, zone.longitude() + dLon).id() == zone.id()) {
+                break;
+            }
+        }
+        return new double[]{zone.latitude() + dLat, zone.longitude() + dLon};
     }
 
     private static <T> T weighted(T[] options, double[] weights) {

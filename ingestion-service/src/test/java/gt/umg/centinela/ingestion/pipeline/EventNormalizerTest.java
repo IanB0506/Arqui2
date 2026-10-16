@@ -46,12 +46,12 @@ class EventNormalizerTest {
         String json = """
                 {"event_id":"1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed","timestamp":"2026-10-30T04:04:00Z",
                  "tipo_evento":"ACCIDENTE","origen":"APP","reportante_id":"CIU-00042",
-                 "ubicacion_aproximada":{"latitud":14.621234,"longitud":-90.538765}}
+                 "ubicacion_aproximada":{"latitud":14.597812,"longitud":-90.507345}}
                 """;
         NormalizedEvent event = normalizer.normalize(SensorType.CITIZEN_REPORT, json);
-        assertThat(event.zoneId()).isEqualTo(6);
-        assertThat(event.latitude()).isEqualTo(14.621);
-        assertThat(event.longitude()).isEqualTo(-90.539);
+        assertThat(event.zoneId()).isEqualTo(10);   // Zona Viva
+        assertThat(event.latitude()).isEqualTo(14.598);
+        assertThat(event.longitude()).isEqualTo(-90.507);
         assertThat(event.sourceHash()).isNotNull().doesNotContain("CIU");
     }
 

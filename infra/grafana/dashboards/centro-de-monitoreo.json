@@ -492,9 +492,9 @@
       "options": {
         "view": {
           "id": "coords",
-          "lat": 14.62,
-          "lon": -90.53,
-          "zoom": 13.4,
+          "lat": 14.623,
+          "lon": -90.523,
+          "zoom": 13.1,
           "allLayers": true
         },
         "controls": {
