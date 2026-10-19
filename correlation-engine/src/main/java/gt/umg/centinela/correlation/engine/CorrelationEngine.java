@@ -316,9 +316,11 @@ public class CorrelationEngine {
 
     private AlertEvent falsePositive(RuleDefinition rule, RuleMatch match) {
         NormalizedEvent anchor = match.anchor();
+        // la evidencia incluye al ancla: si hay mas, se encontro algo, pero no basto para el umbral
+        String what = match.evidence().size() > 1 ? "con corroboracion insuficiente" : "sin eventos complementarios";
         String description = String.format(Locale.ROOT,
-                "%s sin eventos complementarios en %s durante %d s. Puntaje %.2f < umbral %.2f. Evidencia: %s.",
-                rule.getAnchor().getLabel(), anchor.zoneName(), properties.getFalsePositiveTimeout().toSeconds(),
+                "%s %s en %s durante %d s. Puntaje %.2f < umbral %.2f. Evidencia: %s.",
+                rule.getAnchor().getLabel(), what, anchor.zoneName(), properties.getFalsePositiveTimeout().toSeconds(),
                 match.score(), match.threshold(), String.join("; ", match.reasons()));
         log.info("POSIBLE FALSO POSITIVO {} en {} (regla {})", anchor.summary(), anchor.zoneName(), rule.getId());
         return new AlertEvent(deterministicId("fp:" + rule.getId() + ":" + anchor.eventId()), 1,
