@@ -1,0 +1,96 @@
+# ---------------------------------------------------------------------------
+# ingestion-service - nodo B (puede escalarse con instancias extra en nodos C/D)
+# ---------------------------------------------------------------------------
+server:
+  port: 8081
+  shutdown: graceful
+
+spring:
+  application:
+    name: ingestion-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    client-id: ${spring.application.name}-${NODE_NAME:nodo-b}   # identifica la maquina en los grupos de consumidores
+    consumer:
+      group-id: ingestion
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 200
+        # Si una instancia muere, Kafka reasigna sus particiones en ~10 s (antes 45 s por defecto)
+        session.timeout.ms: ${KAFKA_SESSION_TIMEOUT_MS:10000}
+        heartbeat.interval.ms: ${KAFKA_HEARTBEAT_INTERVAL_MS:3000}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      compression-type: lz4
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}   # sin broker, send() no cuelga 60 s al gateway
+  task:
+    scheduling:
+      pool:
+        size: 2                     # la sonda de Redis no espera al reenvio del spool del gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:centinela-redis}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+ingestion:
+  plate-hmac-secret: ${PLATE_HMAC_SECRET:dev-cambiar-esta-llave-en-produccion}
+  speed-tolerance: 0.3          # exceso = velocidad > limite * 1.3  (60 km/h -> 78 km/h)
+  default-speed-limit: 60
+  coordinate-decimals: 3        # ~110 m de precision para ubicaciones de ciudadanos
+  max-clock-skew: 2m
+  max-event-age: 24h
+  allow-historical: ${INGESTION_ALLOW_HISTORICAL:false}
+  dedup-ttl: 10m
+  degraded-sample-rate: 0.1
+  resilience:                   # ADR-006: clases de falla, reintentos y deduplicacion
+    transient-initial-interval: 1s
+    transient-max-interval: ${INGESTION_RETRY_MAX_INTERVAL:30s}   # reintentos sin limite si Kafka/Redis caen
+    unknown-max-attempts: 4     # errores no clasificados: 4 reintentos y luego DLQ
+    retry-log-every: 10
+    publish-timeout: 20s        # mayor que delivery.timeout.ms (15 s)
+    redis-retry-after: 5s       # con Redis caido, un solo hilo vuelve a probar cada 5 s
+    dedup-pending-ttl: 60s      # marca "pendiente" huerfana si el proceso muere
+    degraded-stale-after: 2m
+  gateway:                      # spool del gateway REST de la app movil
+    spool-dir: ${INGESTION_SPOOL_DIR:./spool}
+    ack-timeout: ${INGESTION_GATEWAY_ACK_TIMEOUT:3s}
+    kafka-down-backoff: 10s
+    max-attempts: 5
+    max-size-mb: 32
+    fsync: true
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true           # /actuator/health/liveness responde aunque Redis este caido
+      show-components: always   # el vigilante dice que dependencia cayo (redis, kafka...)
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      node: ${NODE_NAME:nodo-b}
+
+logging:
+  level:
+    # Con Kafka caido, cada consumidor repite "Connection to node 1 could not be established" cada
+    # segundo; el vigilante y /actuator/health ya informan la caida y la recuperacion (ADR-006).
+    org.apache.kafka.clients.NetworkClient: ${KAFKA_NETWORK_LOG_LEVEL:ERROR}
+    # El chequeo de salud de Redis escribe la traza completa en cada consulta; el estado ya se ve en
+    # /actuator/health y en el vigilante.
+    org.springframework.boot.actuate.data.redis: ERROR

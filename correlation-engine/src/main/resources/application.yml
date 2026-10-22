@@ -1,0 +1,270 @@
+# ---------------------------------------------------------------------------
+# correlation-engine - nodo B (escalable con instancias extra en nodos C/D)
+#
+# Las reglas de correlacion viven aqui y no en el codigo: son el "modelo de
+# inferencia" del sistema y pueden ajustarse sin recompilar.
+# ---------------------------------------------------------------------------
+server:
+  port: 8082
+  shutdown: graceful
+
+spring:
+  application:
+    name: correlation-engine
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    client-id: ${spring.application.name}-${NODE_NAME:nodo-b}   # identifica la maquina en los grupos de consumidores
+    consumer:
+      group-id: correlation
+      auto-offset-reset: latest       # al arrancar no reprocesa historia vieja: correlacion en tiempo real
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        # Si una instancia muere, Kafka reasigna sus particiones en ~10 s (antes 45 s por defecto)
+        session.timeout.ms: ${KAFKA_SESSION_TIMEOUT_MS:10000}
+        heartbeat.interval.ms: ${KAFKA_HEARTBEAT_INTERVAL_MS:3000}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:centinela-redis}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-components: always
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      node: ${NODE_NAME:nodo-b}
+
+correlation:
+  window-retention: 15m
+  false-positive-timeout: ${CORRELATION_FP_TIMEOUT:90s}
+  incident-cooldown: 10m
+  suspect-tracking: 30m
+  catch-up-threshold: 10s    # evento con mas atraso = puesta al dia tras una caida...
+  catch-up-hold: 20s         # ...mientras tanto no se clasifican falsos positivos
+  device-abuse:
+    max-panics: 5            # mas de 5 panicos del mismo dispositivo...
+    window: 10m              # ...en 10 minutos lo marca como sospechoso
+    flag-duration: 1h
+
+  # Puntaje = peso del ancla + suma de pesos de evidencias en la misma zona y ventana (max 1.0)
+  rules:
+    # R1 - Fila 1 de la tabla 2.4: panico + LPR + velocidad -> robo en curso
+    - id: R1-ROBO
+      alert-type: ROBO_EN_CURSO
+      title: Robo en curso
+      window-before: 2m
+      window-after: 5m
+      threshold: 0.70
+      critical-threshold: 0.90
+      severity: HIGH
+      false-positive-check: true
+      track-plate: true
+      anchor:
+        label: Boton de panico
+        sensor-types: [PANIC]
+        subtypes: [PANICO, ROBO, ASALTO]
+        weight: 0.40
+      evidence:
+        - label: Exceso de velocidad o contravia
+          sensor-types: [SPEED]
+          anomalous: true
+          weight: 0.30
+        - label: Vehiculo a alta velocidad captado por LPR
+          sensor-types: [LPR]
+          anomalous: true
+          weight: 0.20
+        - label: Vehiculo con reporte de robo
+          sensor-types: [LPR]
+          watchlist: true
+          weight: 0.20
+        - label: Disparo o vidrios rotos
+          sensor-types: [ACOUSTIC]
+          subtypes: [DISPARO, VIDRIOS_ROTOS]
+          min-confidence: 0.6
+          weight: 0.15
+        - label: Otra persona reporta robo o presiona panico
+          sensor-types: [PANIC, CITIZEN_REPORT]
+          subtypes: [PANICO, ROBO, ASALTO]
+          weight: 0.10
+          max-count: 2
+
+    # R2 - Accidente vial iniciado por reporte ciudadano
+    - id: R2-ACCIDENTE-REPORTE
+      alert-type: ACCIDENTE_VIAL
+      title: Accidente vial
+      window-before: 3m
+      window-after: 3m
+      threshold: 0.70
+      critical-threshold: 0.90
+      severity: HIGH
+      false-positive-check: true
+      anchor:
+        label: Reporte de accidente
+        sensor-types: [CITIZEN_REPORT, PANIC]
+        subtypes: [ACCIDENTE]
+        weight: 0.45
+      evidence:
+        - label: Choque o vidrios rotos detectados
+          sensor-types: [ACOUSTIC]
+          subtypes: [CHOQUE_VEHICULAR, VIDRIOS_ROTOS]
+          min-confidence: 0.6
+          weight: 0.30
+        - label: Exceso de velocidad
+          sensor-types: [SPEED, LPR]
+          anomalous: true
+          weight: 0.25
+        - label: Otro reporte de accidente
+          sensor-types: [CITIZEN_REPORT, PANIC]
+          subtypes: [ACCIDENTE]
+          weight: 0.15
+          max-count: 2
+
+    # R3 - Accidente vial detectado solo por sensores (sin que nadie lo reporte aun)
+    - id: R3-ACCIDENTE-SENSORES
+      alert-type: ACCIDENTE_VIAL
+      title: Accidente vial
+      window-before: 1m
+      window-after: 2m
+      threshold: 0.70
+      critical-threshold: 0.90
+      severity: HIGH
+      anchor:
+        label: Choque vehicular detectado
+        sensor-types: [ACOUSTIC]
+        subtypes: [CHOQUE_VEHICULAR]
+        min-confidence: 0.7
+        weight: 0.50
+      evidence:
+        - label: Exceso de velocidad
+          sensor-types: [SPEED, LPR]
+          anomalous: true
+          weight: 0.30
+        - label: Reporte de accidente
+          sensor-types: [CITIZEN_REPORT, PANIC]
+          subtypes: [ACCIDENTE]
+          weight: 0.20
+          max-count: 2
+
+    # R4 - Disparos confirmados (filtra cohetes: un solo sonido no basta)
+    - id: R4-DISPAROS
+      alert-type: DISPAROS_CONFIRMADOS
+      title: Disparos confirmados
+      window-before: 2m
+      window-after: 3m
+      threshold: 0.70
+      critical-threshold: 0.90
+      severity: HIGH
+      false-positive-check: true
+      anchor:
+        label: Disparo detectado
+        sensor-types: [ACOUSTIC]
+        subtypes: [DISPARO]
+        min-confidence: 0.7
+        weight: 0.50
+      evidence:
+        - label: Disparo en otro sensor
+          sensor-types: [ACOUSTIC]
+          subtypes: [DISPARO]
+          min-confidence: 0.6
+          weight: 0.15
+          max-count: 2
+        - label: Boton de panico
+          sensor-types: [PANIC]
+          subtypes: [PANICO, ROBO, ASALTO]
+          weight: 0.30
+        - label: Reporte de altercado o robo
+          sensor-types: [CITIZEN_REPORT]
+          subtypes: [ALTERCADO, ROBO]
+          weight: 0.20
+          max-count: 2
+
+    # R5 - Incendio estructural
+    - id: R5-INCENDIO
+      alert-type: INCENDIO_ESTRUCTURAL
+      title: Incendio estructural
+      window-before: 5m
+      window-after: 5m
+      threshold: 0.70
+      critical-threshold: 0.90
+      severity: HIGH
+      false-positive-check: true
+      anchor:
+        label: Reporte de incendio
+        sensor-types: [CITIZEN_REPORT, PANIC]
+        subtypes: [INCENDIO]
+        weight: 0.45
+      evidence:
+        - label: Otro reporte de incendio
+          sensor-types: [CITIZEN_REPORT, PANIC]
+          subtypes: [INCENDIO]
+          weight: 0.25
+          max-count: 2
+        - label: Explosion detectada
+          sensor-types: [ACOUSTIC]
+          subtypes: [EXPLOSION]
+          min-confidence: 0.6
+          weight: 0.25
+
+    # R6 - Vehiculo con reporte de robo (lista de placas seudonimizadas)
+    - id: R6-VEHICULO-REPORTADO
+      alert-type: VEHICULO_REPORTADO
+      title: Vehiculo con reporte de robo
+      window-before: 2m
+      window-after: 2m
+      threshold: 0.70
+      critical-threshold: 0.95
+      severity: HIGH
+      anchor:
+        label: Placa en lista de vehiculos robados
+        sensor-types: [LPR]
+        watchlist: true
+        weight: 0.80
+      evidence:
+        - label: Exceso de velocidad
+          sensor-types: [SPEED, LPR]
+          anomalous: true
+          weight: 0.20
+
+    # R7 - Emergencia medica: no requiere corroboracion, una alerta por cada boton
+    - id: R7-EMERGENCIA-MEDICA
+      alert-type: EMERGENCIA_MEDICA
+      title: Emergencia medica
+      window-before: 1m
+      window-after: 1m
+      threshold: 0.50
+      severity: HIGH
+      incident-scope: ANCHOR
+      anchor:
+        label: Boton de emergencia medica
+        sensor-types: [PANIC]
+        subtypes: [EMERGENCIA_MEDICA]
+        weight: 1.0
+
+logging:
+  level:
+    # Con Kafka caido, cada consumidor repite "Connection to node 1 could not be established" cada
+    # segundo; el vigilante y /actuator/health ya informan la caida y la recuperacion (ADR-006).
+    org.apache.kafka.clients.NetworkClient: ${KAFKA_NETWORK_LOG_LEVEL:ERROR}
+    # El chequeo de salud de Redis escribe la traza completa en cada consulta; el estado ya se ve en
+    # /actuator/health y en el vigilante.
+    org.springframework.boot.actuate.data.redis: ERROR

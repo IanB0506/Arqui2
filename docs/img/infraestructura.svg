@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="arrowGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#90a4ae"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="860" fill="#ffffff"/>
+  <text x="700" y="38" text-anchor="middle" font-size="24" font-weight="bold" fill="#263238">Centinela Urbano - Esquema de infraestructura on-premise (nodos, servicios y segmentos de red)</text>
+  <text x="700" y="62" text-anchor="middle" font-size="14" fill="#546e7a">LAN municipal segmentada en VLAN; switch L3 / firewall con reglas de minimo privilegio (ADR-001, ADR-005, ADR-007)</text>
+
+  <!-- VLAN 10 sensores -->
+  <rect x="30" y="90" width="400" height="560" rx="14" fill="#e8f5e9" stroke="#43a047" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="50" y="118" font-size="16" font-weight="bold" fill="#2e7d32">VLAN 10 - Sensores / borde</text>
+  <text x="50" y="138" font-size="12" fill="#2e7d32">Generacion de eventos (en produccion: pasarelas de sensores)</text>
+
+  <rect x="55" y="155" width="350" height="215" rx="10" fill="#ffffff" stroke="#2e7d32" stroke-width="2"/>
+  <text x="70" y="182" font-size="17" font-weight="bold" fill="#263238">Nodo C</text>
+  <text x="390" y="182" text-anchor="end" font-size="12" fill="#607d8b">Windows / Linux - 4 GB</text>
+  <rect x="70" y="196" width="320" height="44" rx="8" fill="#c8e6c9"/>
+  <text x="85" y="216" font-size="14" font-weight="bold" fill="#1b5e20">sensor-simulator :8080</text>
+  <text x="85" y="233" font-size="12" fill="#1b5e20">Zonas 1-6, escenarios, replay CSV, spool</text>
+  <rect x="70" y="250" width="320" height="34" rx="8" fill="#f1f8e9" stroke="#9ccc65" stroke-dasharray="4 3"/>
+  <text x="85" y="272" font-size="13" fill="#33691e">ingestion-worker :8081 (perfil workers)*</text>
+  <rect x="70" y="292" width="320" height="34" rx="8" fill="#f1f8e9" stroke="#9ccc65" stroke-dasharray="4 3"/>
+  <text x="85" y="314" font-size="13" fill="#33691e">correlation-worker :8082 (perfil workers)*</text>
+  <text x="70" y="355" font-size="12" fill="#607d8b">* reparten la carga: Kafka asigna particiones</text>
+
+  <rect x="55" y="390" width="350" height="190" rx="10" fill="#ffffff" stroke="#2e7d32" stroke-width="2"/>
+  <text x="70" y="417" font-size="17" font-weight="bold" fill="#263238">Nodo D</text>
+  <text x="390" y="417" text-anchor="end" font-size="12" fill="#607d8b">Windows / Linux - 4 GB</text>
+  <rect x="70" y="431" width="320" height="44" rx="8" fill="#c8e6c9"/>
+  <text x="85" y="451" font-size="14" font-weight="bold" fill="#1b5e20">sensor-simulator :8080</text>
+  <text x="85" y="468" font-size="12" fill="#1b5e20">Zonas 7-12</text>
+  <rect x="70" y="485" width="320" height="34" rx="8" fill="#f1f8e9" stroke="#9ccc65" stroke-dasharray="4 3"/>
+  <text x="85" y="507" font-size="13" fill="#33691e">ingestion / correlation workers (opcional)*</text>
+  <text x="70" y="555" font-size="12" fill="#607d8b">Mismo compose que el nodo C (deploy/nodo-c)</text>
+
+  <text x="55" y="625" font-size="12" fill="#2e7d32">Solo puede abrir conexiones hacia el nodo A:</text>
+  <text x="55" y="641" font-size="12" fill="#2e7d32">Kafka 9092 y Redis 6379</text>
+
+  <!-- VLAN 30 datos -->
+  <rect x="500" y="90" width="400" height="400" rx="14" fill="#e3f2fd" stroke="#1e88e5" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="520" y="118" font-size="16" font-weight="bold" fill="#1565c0">VLAN 30 - Datos</text>
+  <text x="520" y="138" font-size="12" fill="#1565c0">No inicia conexiones; solo recibe desde VLAN 10 y 20</text>
+  <rect x="525" y="155" width="350" height="315" rx="10" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+  <text x="540" y="182" font-size="17" font-weight="bold" fill="#263238">Nodo A</text>
+  <text x="860" y="182" text-anchor="end" font-size="12" fill="#607d8b">Ubuntu Server 22.04 - 8+ GB</text>
+  <rect x="540" y="198" width="320" height="70" rx="8" fill="#bbdefb"/>
+  <text x="555" y="221" font-size="15" font-weight="bold" fill="#0d47a1">Apache Kafka 3.9 (KRaft) :9092</text>
+  <text x="555" y="240" font-size="12" fill="#0d47a1">5 topics crudos + events.normalized (12 part.)</text>
+  <text x="555" y="257" font-size="12" fill="#0d47a1">alerts (3 part.) + events.dlq</text>
+  <rect x="540" y="278" width="320" height="70" rx="8" fill="#bbdefb"/>
+  <text x="555" y="301" font-size="15" font-weight="bold" fill="#0d47a1">TimescaleDB 2.17 / PG 16 :5432</text>
+  <text x="555" y="320" font-size="12" fill="#0d47a1">hypertable sensor_events, alertas, auditoria,</text>
+  <text x="555" y="337" font-size="12" fill="#0d47a1">SLO, calidad de reglas (retencion 90 dias)</text>
+  <rect x="540" y="358" width="320" height="70" rx="8" fill="#bbdefb"/>
+  <text x="555" y="381" font-size="15" font-weight="bold" fill="#0d47a1">Redis 7.4 :6379</text>
+  <text x="555" y="400" font-size="12" fill="#0d47a1">ventanas de correlacion, incidentes, dedup,</text>
+  <text x="555" y="417" font-size="12" fill="#0d47a1">lista de placas (seudonimos), bandera degradado</text>
+  <text x="540" y="455" font-size="12" fill="#607d8b">Discos en RAID 1, UPS, respaldo diario de la BD</text>
+
+  <!-- VLAN 20 servicios -->
+  <rect x="970" y="90" width="400" height="460" rx="14" fill="#fff3e0" stroke="#fb8c00" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="990" y="118" font-size="16" font-weight="bold" fill="#e65100">VLAN 20 - Servicios</text>
+  <text x="990" y="138" font-size="12" fill="#e65100">Microservicios Java 21 / Spring Boot + visualizacion</text>
+  <rect x="995" y="155" width="350" height="375" rx="10" fill="#ffffff" stroke="#e65100" stroke-width="2"/>
+  <text x="1010" y="182" font-size="17" font-weight="bold" fill="#263238">Nodo B</text>
+  <text x="1330" y="182" text-anchor="end" font-size="12" fill="#607d8b">macOS / Linux - 8 GB</text>
+  <rect x="1010" y="196" width="320" height="44" rx="8" fill="#ffe0b2"/>
+  <text x="1025" y="216" font-size="14" font-weight="bold" fill="#bf360c">ingestion-service :8081</text>
+  <text x="1025" y="233" font-size="12" fill="#bf360c">valida, normaliza, seudonimiza, DLQ, REST app</text>
+  <rect x="1010" y="248" width="320" height="44" rx="8" fill="#ffe0b2"/>
+  <text x="1025" y="268" font-size="14" font-weight="bold" fill="#bf360c">correlation-engine :8082</text>
+  <text x="1025" y="285" font-size="12" fill="#bf360c">reglas de evidencia ponderada (YAML)</text>
+  <rect x="1010" y="300" width="320" height="44" rx="8" fill="#ffe0b2"/>
+  <text x="1025" y="320" font-size="14" font-weight="bold" fill="#bf360c">alert-service :8083</text>
+  <text x="1025" y="337" font-size="12" fill="#bf360c">API, consola (SSE), tareas ShedLock, Flyway</text>
+  <rect x="1010" y="352" width="155" height="44" rx="8" fill="#fbe9e7"/>
+  <text x="1022" y="372" font-size="13" font-weight="bold" fill="#4e342e">Prometheus</text>
+  <text x="1022" y="389" font-size="12" fill="#4e342e">:9090</text>
+  <rect x="1175" y="352" width="155" height="44" rx="8" fill="#fbe9e7"/>
+  <text x="1187" y="372" font-size="13" font-weight="bold" fill="#4e342e">Grafana</text>
+  <text x="1187" y="389" font-size="12" fill="#4e342e">:3000 (3 dashboards)</text>
+  <text x="1010" y="425" font-size="12" fill="#607d8b">Hacia nodo A: 9092, 5432, 6379</text>
+  <text x="1010" y="443" font-size="12" fill="#607d8b">Recolecta metricas de C/D: 8080-8082</text>
+  <text x="1010" y="461" font-size="12" fill="#607d8b">Grafana lee vistas sin seudonimos</text>
+  <text x="1010" y="479" font-size="12" fill="#607d8b">(usuario grafana_reader)</text>
+
+  <!-- VLAN 40 operadores -->
+  <rect x="970" y="590" width="400" height="160" rx="14" fill="#f3e5f5" stroke="#8e24aa" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="990" y="618" font-size="16" font-weight="bold" fill="#6a1b9a">VLAN 40 - Operadores</text>
+  <rect x="995" y="633" width="350" height="95" rx="10" fill="#ffffff" stroke="#6a1b9a" stroke-width="2"/>
+  <text x="1010" y="660" font-size="15" font-weight="bold" fill="#263238">Centro de monitoreo municipal</text>
+  <text x="1010" y="682" font-size="12" fill="#4a148c">Consola del operador (roles OPERATOR / ADMIN)</text>
+  <text x="1010" y="700" font-size="12" fill="#4a148c">Grafana: mapa de calor, SLO, falsos positivos</text>
+  <text x="1010" y="718" font-size="12" fill="#4a148c">Solo alcanza al nodo B: 8083 y 3000</text>
+
+  <!-- switch -->
+  <rect x="500" y="560" width="400" height="90" rx="12" fill="#eceff1" stroke="#455a64" stroke-width="2"/>
+  <text x="700" y="590" text-anchor="middle" font-size="16" font-weight="bold" fill="#263238">Switch L3 / Firewall</text>
+  <text x="700" y="612" text-anchor="middle" font-size="12" fill="#455a64">enrutamiento entre VLAN con reglas explicitas</text>
+  <text x="700" y="630" text-anchor="middle" font-size="12" fill="#455a64">NTP comun (mediciones de latencia)</text>
+
+  <!-- arrows -->
+  <line x1="405" y1="230" x2="532" y2="230" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="468" y="220" text-anchor="middle" font-size="12" fill="#263238">eventos 9092</text>
+  <line x1="405" y1="455" x2="532" y2="395" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="470" y="440" text-anchor="middle" font-size="12" fill="#263238">9092 / 6379</text>
+  <line x1="1003" y1="235" x2="868" y2="235" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="935" y="225" text-anchor="middle" font-size="12" fill="#263238">Kafka 9092</text>
+  <line x1="1003" y1="315" x2="868" y2="315" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="935" y="305" text-anchor="middle" font-size="12" fill="#263238">SQL 5432</text>
+  <line x1="1003" y1="395" x2="868" y2="395" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="935" y="385" text-anchor="middle" font-size="12" fill="#263238">Redis 6379</text>
+  <line x1="1170" y1="633" x2="1170" y2="538" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="1180" y="585" font-size="12" fill="#263238">HTTP 8083 / 3000</text>
+  <path d="M995,505 C800,780 520,760 405,560" fill="none" stroke="#90a4ae" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowGrey)"/>
+  <text x="640" y="770" text-anchor="middle" font-size="12" fill="#78909c">Prometheus recolecta metricas de los nodos C/D (8080-8082)</text>
+
+  <!-- leyenda -->
+  <text x="30" y="700" font-size="13" font-weight="bold" fill="#263238">Leyenda</text>
+  <line x1="30" y1="720" x2="80" y2="720" stroke="#37474f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="90" y="724" font-size="12" fill="#263238">flujo de datos permitido por el firewall (puerto)</text>
+  <line x1="30" y1="745" x2="80" y2="745" stroke="#90a4ae" stroke-width="2" stroke-dasharray="6 5"/>
+  <text x="90" y="749" font-size="12" fill="#263238">monitoreo (solo lectura de metricas)</text>
+  <rect x="30" y="760" width="50" height="18" rx="4" fill="#f1f8e9" stroke="#9ccc65" stroke-dasharray="4 3"/>
+  <text x="90" y="774" font-size="12" fill="#263238">instancia opcional para repartir carga</text>
+  <text x="30" y="820" font-size="12" fill="#607d8b">Un solo equipo tambien puede correr todo con docker-compose.yml (modo de desarrollo / plan B de la demo).</text>
+</svg>

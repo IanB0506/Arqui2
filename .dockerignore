@@ -1,0 +1,13 @@
+.git
+**/target/*
+!**/target/app.jar
+docs
+informe
+*.md
+# Secretos y archivos locales: nunca al contexto de compilación
+**/.env
+backups
+.centinela
+deploy/nodo-b/targets/generadores.json
+# Imágenes exportadas (varios GB): nunca al contexto de compilación
+*.tar
