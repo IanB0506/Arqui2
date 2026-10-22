@@ -51,11 +51,16 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
 
    Como se evalúa en ambos sentidos, **no importa el orden de llegada**: la evidencia puede llegar
    antes o después del ancla.
-7. Si el mejor puntaje alcanza el umbral, se **abre o actualiza el incidente**:
+7. Las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje, y la primera que
+   aporta algo **abre o actualiza el incidente** (a lo sumo una alerta o revisión por evento):
    - **NEW:** primera vez de ese tipo en esa zona (en los últimos 10 minutos).
    - **ESCALATED:** el incidente ya existía y subió de severidad o apareció una placa sospechosa.
    - **UPDATED:** se sumó un nuevo testigo o ancla, como otro botón de pánico.
-   - Nada nuevo: no se emite nada (se evitan duplicados).
+   - Nada nuevo: se prueba la coincidencia siguiente; si ninguna aporta, no se emite nada (se
+     evitan duplicados). Probar solo la mejor era un defecto, encontrado al grabar el video: un
+     segundo robo 2 a 5 minutos después del primero perdía frente a la coincidencia del primer pánico
+     (que ya estaba en el incidente) y su revisión salía recién a los 90 s, al vencer el plazo de
+     falso positivo.
 8. Si un ancla con verificación de falso positivo no alcanza el umbral, queda **pendiente**. Cada 2
    segundos se revisan las que vencieron (90 s):
    - si ninguna alerta la usó como evidencia, se emite `POSIBLE_FALSO_POSITIVO` (severidad LOW,
@@ -153,7 +158,10 @@ reporte, R3 abre el incidente (HIGH) y luego R2 lo escala al llegar el reporte (
 - **Ancla:** lectura LPR de una placa que está en la lista de robados; se compara por seudónimo (+0,80).
 - **Ventana:** ±2 minutos.
 - **Umbrales:** 0,70 / 0,95.
-- **Evidencia:** exceso de velocidad (+0,20).
+- **Evidencia:** exceso de velocidad (+0,20) de un sensor de velocidad, que no lee placas, o de una
+  cámara que lee la **misma** placa. Una cámara que identifica otra placa es otro vehículo y no
+  corrobora (corregido al grabar el video: un auto en fuga que pasaba por la zona escalaba la
+  alerta del vehículo robado).
 
 ### R7 - Emergencia médica (`EMERGENCIA_MEDICA`)
 

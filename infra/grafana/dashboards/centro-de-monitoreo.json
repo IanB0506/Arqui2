@@ -404,7 +404,7 @@
       "id": 7,
       "type": "geomap",
       "title": "Mapa de calor: eventos de riesgo y alertas",
-      "description": "Calor = botones de panico, reportes ciudadanos y lecturas anomalas. Puntos = alertas (color por severidad).",
+      "description": "Calor = botones de panico, reportes ciudadanos y lecturas anomalas. Puntos = alertas (color por severidad). Las zonas son las regiones del centroide mas cercano, la misma regla con la que la ingesta asigna la zona; se dibujan aunque no haya internet para el mapa base.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "timescaledb"
@@ -434,6 +434,17 @@
             "uid": "timescaledb"
           },
           "rawSql": "SELECT latitude, longitude, alert_type AS tipo, severity AS severidad, zone_name AS zona,\nCASE severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 ELSE 1 END AS nivel\nFROM v_alerts WHERE $__timeFilter(updated_at) AND zone_id > 0",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          },
+          "rawSql": "-- Centroides de ZoneCatalog (etiquetas del mapa)\nSELECT zona, latitude, longitude FROM (VALUES\n('Zona 1', 14.642, -90.513),\n('Zona 2', 14.6595, -90.512),\n('Zona 3', 14.636, -90.525),\n('Zona 4', 14.624, -90.5165),\n('Zona 5', 14.626, -90.498),\n('Zona 6', 14.653, -90.496),\n('Zona 7', 14.635, -90.548),\n('Zona 8', 14.626, -90.532),\n('Zona 9', 14.606, -90.518),\n('Zona 10', 14.596, -90.506),\n('Zona 11', 14.608, -90.545),\n('Zona 12', 14.59, -90.538)\n) AS z(zona, latitude, longitude)",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -509,6 +520,29 @@
         },
         "layers": [
           {
+            "type": "geojson",
+            "name": "Zonas",
+            "tooltip": false,
+            "config": {
+              "src": "public/maps/zonas-guatemala.geojson",
+              "rules": [],
+              "style": {
+                "color": {
+                  "fixed": "#5794F2"
+                },
+                "opacity": 0.12,
+                "lineWidth": 2,
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                },
+                "size": {
+                  "fixed": 5
+                }
+              }
+            }
+          },
+          {
             "type": "heatmap",
             "name": "Eventos de riesgo",
             "tooltip": true,
@@ -562,6 +596,50 @@
             "filterData": {
               "id": "byRefId",
               "options": "B"
+            }
+          },
+          {
+            "type": "markers",
+            "name": "Nombre de zona",
+            "tooltip": false,
+            "config": {
+              "showLegend": false,
+              "style": {
+                "size": {
+                  "fixed": 1,
+                  "min": 1,
+                  "max": 1
+                },
+                "color": {
+                  "fixed": "#C8D6F5"
+                },
+                "opacity": 0.9,
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                },
+                "text": {
+                  "mode": "field",
+                  "field": "zona",
+                  "fixed": ""
+                },
+                "textConfig": {
+                  "fontSize": 13,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                }
+              }
+            },
+            "location": {
+              "mode": "coords",
+              "latitude": "latitude",
+              "longitude": "longitude"
+            },
+            "filterData": {
+              "id": "byRefId",
+              "options": "C"
             }
           }
         ],

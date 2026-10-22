@@ -89,6 +89,28 @@ class CorrelationEngineTest {
     }
 
     @Test
+    void secondRobberyMinutesLaterUpdatesTheOpenIncidentRightAway() {
+        feed(event(SensorType.PANIC, 3, "ROBO", null, true, "APP-20", "user-20", 0));
+        feed(event(SensorType.SPEED, 3, "EXCESO_VELOCIDAD", 85.0, true, "VEL-Z03-01", null, 15));
+        AlertEvent first = feed(lpr(3, "hash-abc", "ABC***", 87.0, 18)).get(0);
+        assertThat(first.severity()).isEqualTo(Severity.CRITICAL);
+        // tres minutos despues otra persona presiona panico y llega su propia evidencia. La coincidencia de
+        // mayor puntaje sigue siendo la del primer panico, que ya esta en el incidente y no aporta nada.
+        clock.advance(Duration.ofMinutes(3));
+        assertThat(feed(event(SensorType.PANIC, 3, "ROBO", null, true, "APP-21", "user-21", 180))).isEmpty();
+        List<AlertEvent> update = feed(event(SensorType.SPEED, 3, "EXCESO_VELOCIDAD", 92.0, true, "VEL-Z03-02", null, 195));
+        // la revision sale con la evidencia del segundo panico, no 90 s despues al vencer su plazo
+        assertThat(update).singleElement().satisfies(a -> {
+            assertThat(a.alertId()).isEqualTo(first.alertId());
+            assertThat(a.status()).isEqualTo(AlertStatus.UPDATED);
+            assertThat(a.revision()).isEqualTo(3);
+            assertThat(a.severity()).isEqualTo(Severity.CRITICAL);
+        });
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(engine.sweepPending()).isEmpty();
+    }
+
+    @Test
     void table24Row2LonePanicBecomesPossibleFalsePositive() {
         assertThat(feed(event(SensorType.PANIC, 10, "PANICO", null, true, "APP-2", "user-2", 0))).isEmpty();
         clock.advance(Duration.ofSeconds(60));
@@ -213,6 +235,21 @@ class CorrelationEngineTest {
     }
 
     @Test
+    void anotherPlateSpeedingDoesNotCorroborateTheStolenVehicle() {
+        state.watchlist.add("hash-robado");
+        feed(lpr(11, "hash-robado", "P51***", 68.0, 0));
+        // una camara de la misma zona capta OTRO vehiculo a alta velocidad: no corrobora al robado
+        assertThat(feed(lpr(11, "hash-otro", "XYZ***", 95.0, 26, "LPR-Z11-02"))).isEmpty();
+        // un sensor de velocidad no lee placas: puede ser el mismo vehiculo y si suma
+        assertThat(feed(event(SensorType.SPEED, 11, "EXCESO_VELOCIDAD", 96.0, true, "VEL-Z11-01", null, 30)))
+                .singleElement().satisfies(a -> {
+                    assertThat(a.alertType()).isEqualTo("VEHICULO_REPORTADO");
+                    assertThat(a.severity()).isEqualTo(Severity.CRITICAL);
+                    assertThat(a.evidence()).extracting(e -> e.sensorId()).doesNotContain("LPR-Z11-02");
+                });
+    }
+
+    @Test
     void medicalEmergenciesAreSeparateIncidents() {
         assertThat(feed(event(SensorType.PANIC, 5, "EMERGENCIA_MEDICA", null, true, "APP-6", "u-6", 0)))
                 .extracting(AlertEvent::alertType).containsExactly("EMERGENCIA_MEDICA");
@@ -244,9 +281,14 @@ class CorrelationEngineTest {
     }
 
     private static NormalizedEvent lpr(int zone, String plateHash, String masked, double speed, int secondsAfterT0) {
+        return lpr(zone, plateHash, masked, speed, secondsAfterT0, "LPR-Z%02d-01".formatted(zone));
+    }
+
+    private static NormalizedEvent lpr(int zone, String plateHash, String masked, double speed, int secondsAfterT0,
+                                       String sensorId) {
         var z = ZoneCatalog.byId(zone);
         Instant time = T0.plusSeconds(secondsAfterT0);
-        return new NormalizedEvent(UUID.randomUUID(), SensorType.LPR, "LPR-Z%02d-01".formatted(zone), zone, z.name(),
+        return new NormalizedEvent(UUID.randomUUID(), SensorType.LPR, sensorId, zone, z.name(),
                 z.latitude(), z.longitude(), time, time.plusMillis(20), speed > 78 ? "EXCESO_VELOCIDAD" : "LECTURA_PLACA",
                 speed, 1.0, speed > 78, plateHash, masked, null, "SENSOR", Map.of());
     }

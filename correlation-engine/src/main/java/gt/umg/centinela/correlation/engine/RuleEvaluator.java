@@ -63,6 +63,12 @@ public final class RuleEvaluator {
                 if (usedEvents.contains(candidate.eventId()) || !matcher.matches(candidate, isWatchlisted)) {
                     continue;
                 }
+                // Si el ancla es una placa, una camara que identifica OTRA placa es otro vehiculo y no la corrobora.
+                // Un sensor de velocidad no lee placas: puede ser el mismo vehiculo y si suma.
+                if (anchor.sensorType() == SensorType.LPR && anchor.plateHash() != null
+                        && candidate.plateHash() != null && !candidate.plateHash().equals(anchor.plateHash())) {
+                    continue;
+                }
                 if (!sources.add(sourceOf(candidate))) {
                     continue;
                 }

@@ -135,14 +135,23 @@ declaraba caído al alert-service cuando su chequeo de salud esperaba 30 s a la 
 ahora pregunta además si el proceso está vivo; y cada tarea periódica escribía la traza completa en
 cada ronda durante la caída (cientos de líneas por minuto), por lo que ahora se resume en una línea.
 
+Al grabar el video de la presentación, con el sistema en vivo, aparecieron tres defectos más. El video
+los muestra fallando, explica la causa y los vuelve a probar corregidos:
+
+| # | Defecto | Corrección | Verificación |
+|---|---|---|---|
+| 9 | Un segundo robo en una zona con el incidente abierto (2 a 5 min después del primero) salía como revisión recién a los 90 s: el motor solo probaba la coincidencia de mayor puntaje, la del primer pánico, que ya estaba en el incidente | Las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje hasta que una aporte algo nuevo | Prueba automatizada; en vivo, antes 74 s de atraso y después revisión inmediata |
+| 10 | La regla R6 (vehículo reportado) sumaba el exceso de velocidad de una cámara que había leído **otra** placa, y escalaba a crítica la alerta del vehículo robado | Una cámara que identifica otra placa no corrobora; un sensor de velocidad, que no lee placas, sí | Prueba automatizada con el caso visto en vivo |
+| 11 | El mapa de Grafana dependía de internet: sin los mosaicos de OpenStreetMap solo se veían puntos | Capa local con las 12 zonas (regiones del centroide más cercano, la misma regla de la ingesta) y su nombre | Tablero sin internet en el video |
+
 ## 6. Pruebas automatizadas
 
-`mvn install` (o `centinela.cmd pruebas`) ejecuta **90 pruebas unitarias**:
+`mvn install` (o `centinela.cmd pruebas`) ejecuta **95 pruebas unitarias**:
 
 | Módulo | Pruebas | Qué cubren |
 |---|---|---|
 | common | 34 | Zonas, seudonimización HMAC; diario *write-ahead* (corte de luz con línea truncada, compactación, reinicio con pendientes, topes, `fsync` agrupado concurrente); clasificación de fallas; manejadores de reintento; resumen de errores de tareas periódicas |
-| sensor-simulator | 12 | Ruta de fuga, CSV de replay, qué se guarda en disco si cae Kafka, publicación *write-ahead*, lógica del vigilante (incluye un servidor HTTP real que se cuelga) |
+| sensor-simulator | 15 | Ruta de fuga, puntos dentro de su zona, CSV de replay, qué se guarda en disco si cae Kafka, publicación *write-ahead*, lógica del vigilante (incluye un servidor HTTP real que se cuelga) |
 | ingestion-service | 16 | Seudonimización, generalización de ubicación, anomalías, rechazo de inválidos, deduplicación con ficha de entrega, gateway con spool |
-| correlation-engine | 20 | El modelo completo con las reglas reales del YAML y la resiliencia del motor (publicar antes de guardar, IDs deterministas, pausa de falsos positivos en la puesta al día) |
+| correlation-engine | 22 | El modelo completo con las reglas reales del YAML (incluye el segundo robo con el incidente abierto y la placa ajena en R6) y la resiliencia del motor (publicar antes de guardar, IDs deterministas, pausa de falsos positivos en la puesta al día) |
 | alert-service | 8 | Reproceso de la DLQ y causa del incumplimiento del SLO |

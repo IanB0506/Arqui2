@@ -192,7 +192,7 @@ por IP), con tráfico de fondo y la consola del operador abierta en un navegador
 | **`kill -9` del simulador** con Kafka caído | Al arrancar, el diario devolvió el evento pendiente, se reenvió y salió su alerta. 0 perdidos. |
 | 3 mensajes inválidos inyectados con `kafka-console-producer` | Los 3 llegaron a `events.dlq` como PERMANENTE, sin reintentos; el reproceso por defecto no los tocó. El resto del flujo siguió. |
 | Worker de correlación del nodo C apagado | Kafka reasignó sus 6 particiones al nodo B; una alerta de disparos se generó en 188 ms con el worker caído. Al volver, 6 y 6. |
-| Pruebas automatizadas del diario, la clasificación de fallas, la deduplicación, el gateway, el vigilante, el SLO y el motor | 90 pruebas, todas en verde (incluye: línea truncada por corte de luz, compactación, reinicio con pendientes, reintento del mismo mensaje, muerte entre publicar y guardar). |
+| Pruebas automatizadas del diario, la clasificación de fallas, la deduplicación, el gateway, el vigilante, el SLO y el motor | 95 pruebas, todas en verde (incluye: línea truncada por corte de luz, compactación, reinicio con pendientes, reintento del mismo mensaje, muerte entre publicar y guardar). |
 
 ## Consecuencias
 

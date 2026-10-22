@@ -133,25 +133,28 @@ public class CorrelationEngine {
         if (!isAnchor && !isEvidence) {
             return;
         }
-        RuleMatch best = null;
+        List<RuleMatch> matches = new ArrayList<>();
         if (isAnchor) {
-            best = evaluate(rule, event);
-            if (!best.reachedThreshold() && rule.isFalsePositiveCheck()) {
+            RuleMatch own = evaluate(rule, event);
+            if (!own.reachedThreshold() && rule.isFalsePositiveCheck()) {
                 state.addPending(rule.getId(), event, clock.instant().plus(properties.getFalsePositiveTimeout()));
             }
+            matches.add(own);
         }
         if (isEvidence) {
             for (NormalizedEvent anchor : anchorsAround(rule, event)) {
-                RuleMatch match = evaluate(rule, anchor);
-                if (best == null || match.score() > best.score()) {
-                    best = match;
-                }
+                matches.add(evaluate(rule, anchor));
             }
         }
-        if (best == null || !best.reachedThreshold()) {
-            return;
+        // De mayor a menor puntaje (en empate, el orden de arriba). Si la mejor coincidencia no aporta nada al
+        // incidente abierto (p. ej. su ancla ya esta en el), se prueba la siguiente: asi un panico nuevo que ya
+        // esta corroborado sale como revision al instante y no espera al plazo de falso positivo.
+        matches.sort(Comparator.comparingDouble(RuleMatch::score).reversed());
+        for (RuleMatch match : matches) {
+            if (match.reachedThreshold() && openOrEscalate(match, event.eventTime(), sink)) {
+                return;
+            }
         }
-        openOrEscalate(best, event.eventTime(), sink);
     }
 
     private RuleMatch evaluate(RuleDefinition rule, NormalizedEvent anchor) {
@@ -185,8 +188,10 @@ public class CorrelationEngine {
      * Abre un incidente nuevo o, si ya existe uno del mismo tipo en la zona, lo actualiza solo cuando
      * aporta algo: sube la severidad o aparece una placa (ESCALATED), o se suma un nuevo testigo/ancla
      * (UPDATED). Evita inundar al operador con alertas repetidas sin ocultarle informacion nueva.
+     *
+     * @return {@code true} si publico una alerta o revision
      */
-    private void openOrEscalate(RuleMatch match, Instant triggerTime, AlertSink sink) {
+    private boolean openOrEscalate(RuleMatch match, Instant triggerTime, AlertSink sink) {
         RuleDefinition rule = match.rule();
         String key = rule.getIncidentScope() == RuleDefinition.IncidentScope.ANCHOR
                 ? rule.getAlertType() + ":" + match.anchor().eventId()
@@ -210,7 +215,7 @@ public class CorrelationEngine {
             boolean newPlate = current.plateHash() == null && match.plateHash() != null;
             boolean newAnchor = !current.hasAnchor(match.anchor().eventId());
             if (!higher && !newPlate && !newAnchor) {
-                return;
+                return false;
             }
             alertId = current.alertId();
             revision = current.revision() + 1;
@@ -246,6 +251,7 @@ public class CorrelationEngine {
         }
         log.info("ALERTA {} rev{} {} {} puntaje={} ({})", rule.getAlertType(), revision, severity,
                 match.anchor().zoneName(), match.score(), status);
+        return true;
     }
 
     private static UUID deterministicId(String seed) {

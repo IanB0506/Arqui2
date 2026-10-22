@@ -59,7 +59,7 @@ Decisiones relacionadas con el stack de referencia:
 
 Calidad del código:
 
-- 90 pruebas unitarias; las del motor usan las reglas reales del YAML y las de resiliencia simulan
+- 95 pruebas unitarias; las del motor usan las reglas reales del YAML y las de resiliencia simulan
   cortes de luz, fallas de Kafka y muertes de proceso;
 - configuración externa por variables de entorno;
 - comentarios en español que explican el porqué de cada decisión.

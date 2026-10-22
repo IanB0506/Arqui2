@@ -237,7 +237,7 @@ con `centinela.cmd iniciar -Compilar`):
 
 ```bat
 centinela.cmd compilar                     :: compila los 5 módulos dentro de Docker
-centinela.cmd pruebas                      :: las 90 pruebas automatizadas
+centinela.cmd pruebas                      :: las 95 pruebas automatizadas
 centinela.cmd pruebas correlation-engine   :: solo el modelo de correlación
 ```
 
@@ -250,7 +250,7 @@ Con Java 21 instalado también sirve `mvnw.cmd install` (descarga Maven la prime
 | "...no permitida por sus permisos de acceso" al iniciar | Puerto reservado por Hyper-V/WinNAT (error 10013) | `centinela.cmd puertos -Arreglar` |
 | Los servicios de B o C no alcanzan a Kafka | `NODE_A_IP` incorrecta o firewall de A | `centinela.cmd estado` en B; `centinela.cmd firewall` en A |
 | Grafana muestra "No data" | Aún no hay datos o reloj desfasado | Esperar 1 minuto; `centinela.cmd requisitos` revisa los relojes |
-| El mapa de Grafana no tiene fondo | Sin internet no cargan los mosaicos | El mapa de calor y los puntos se dibujan igual |
+| El mapa de Grafana no tiene fondo de calles | Sin internet no cargan los mosaicos de OpenStreetMap | Las zonas, sus nombres, el mapa de calor y las alertas se dibujan igual con la capa local |
 | La validación da menos de 9/9 | Se corrió con `resetState=false` con incidentes abiertos | Usar `centinela.cmd validar` (reinicia el estado) |
 | `spoolPending` crece | Kafka (nodo A) no está disponible | Revisar el nodo A; los críticos y la telemetría útil se reenvían solos al volver |
 | Consola: "Sin conexión con el servidor" | alert-service (nodo B) caído o red | El vigilante (`/vigilante.html`) dice qué cayó; al volver, la consola recupera lo perdido |

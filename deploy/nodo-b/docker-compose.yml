@@ -87,6 +87,7 @@ services:
     volumes:
       - ../../infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../../infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../../infra/grafana/maps/zonas-guatemala.geojson:/usr/share/grafana/public/maps/zonas-guatemala.geojson:ro
       - grafana-data:/var/lib/grafana
 
 volumes:
