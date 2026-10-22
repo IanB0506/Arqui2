@@ -140,7 +140,7 @@ los muestra fallando, explica la causa y los vuelve a probar corregidos:
 
 | # | Defecto | Corrección | Verificación |
 |---|---|---|---|
-| 9 | Un segundo robo en una zona con el incidente abierto (2 a 5 min después del primero) salía como revisión recién a los 90 s: el motor solo probaba la coincidencia de mayor puntaje, la del primer pánico, que ya estaba en el incidente | Las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje hasta que una aporte algo nuevo | Prueba automatizada; en vivo, antes 74 s de atraso y después revisión inmediata |
+| 9 | Un segundo robo en una zona con el incidente abierto (2 a 5 min después del primero) salía como revisión recién a los 90 s: el motor solo probaba la coincidencia de mayor puntaje, la del primer pánico, que ya estaba en el incidente | Las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje hasta que una aporte algo nuevo | Prueba automatizada; en vivo, antes 74 s de atraso y después 36 ms |
 | 10 | La regla R6 (vehículo reportado) sumaba el exceso de velocidad de una cámara que había leído **otra** placa, y escalaba a crítica la alerta del vehículo robado | Una cámara que identifica otra placa no corrobora; un sensor de velocidad, que no lee placas, sí | Prueba automatizada con el caso visto en vivo |
 | 11 | El mapa de Grafana dependía de internet: sin los mosaicos de OpenStreetMap solo se veían puntos | Capa local con las 12 zonas (regiones del centroide más cercano, la misma regla de la ingesta) y su nombre | Tablero sin internet en el video |
 
