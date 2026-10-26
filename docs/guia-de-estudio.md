@@ -202,6 +202,8 @@ elección" (sección 4).
    - La telemetría útil (placas, excesos, sonidos relevantes) se guarda con tope de 15 minutos; las
      lecturas normales se pierden, y eso es aceptable según la política del ADR-006.
 6. *¿Por qué 12 particiones?* Es el máximo de consumidores en paralelo por grupo: 2 máquinas × 6 hilos.
+   Como la llave es la zona, un particionador propio envía la zona N a la partición N − 1; con el hash
+   por defecto de Kafka, las 12 zonas caían en solo 7 particiones (lo descubrimos en la revisión final).
 7. *¿Por qué un topic por tipo de sensor?* Para aislar la carga (una avalancha de LPR no retrasa los
    pánicos) y para que cada esquema evolucione por separado.
 
@@ -300,7 +302,13 @@ elección" (sección 4).
     CRITICAL. La placa queda sospechosa: si aparece en la Zona 8, se genera `VEHICULO_EN_FUGA`.
 24. *¿Y la fila 2?* El pánico de la Zona 10 suma 0,40, menor que 0,70. Queda pendiente 90 s; como no
     llega evidencia, se clasifica como `POSIBLE_FALSO_POSITIVO`, con severidad baja, para que el
-    operador lo verifique con una llamada.
+    operador lo verifique con una llamada. El escenario aísla la zona del ruido de fondo: sin eso, un
+    exceso de velocidad al azar en la Zona 10 lo corroboraba en ≈ 15 % de las corridas.
+24b. *¿Y si las PCs tienen la hora distinta?* La latencia medida se distorsiona (por eso pedimos NTP),
+    pero la detección no: el motor sabe que se está poniendo al día por el atraso que le reporta Kafka,
+    por los eventos reenviados de un spool y por las particiones que no logran procesar, nunca
+    comparando relojes de dos PCs. La primera versión sí los comparaba, y con 10 s de desfase dejaba
+    de clasificar falsos positivos.
 25. *¿Por qué no usaron inteligencia artificial?*
     - No hay datos históricos etiquetados de incidentes reales, y una caja negra es difícil de
       defender ante un juez.
@@ -309,9 +317,15 @@ elección" (sección 4).
       en el futuro.
 26. *¿Cómo manejan los falsos positivos?*
     - Exigiendo corroboración y marcando dispositivos abusivos.
-    - Pidiendo dos señales para los disparos (por los cohetes).
+    - Pidiendo otra fuente para los disparos (por los cohetes): dos sensores acústicos solos suman
+      0,65 y no alcanzan; hace falta un pánico o un reporte.
     - Con umbrales adaptativos: si en una zona hay muchos falsos positivos validados, se exige más
       evidencia (+0,10).
+    - Lo medimos: en una hora de tráfico de fondo, que no tiene incidentes reales, el 73 % de las 55
+      anclas quedó como posible falso positivo y el 24 % llegó al umbral por coincidencia, casi
+      siempre con 0,70 justos (el ancla más un exceso de velocidad al azar) y sin pasar de HIGH
+      salvo un caso. Con el umbral adaptativo en 0,80, 11 de esas 13 coincidencias no habrían
+      alertado (informe, sección 7.3).
 27. *¿Qué pasa si los eventos llegan desordenados?* Se correlaciona por la hora del evento y se
     evalúa tanto al llegar el ancla como al llegar la evidencia, así que el orden no importa.
 28. *¿Cómo evitan alertas duplicadas?* Un incidente por tipo y zona durante 10 minutos: la nueva
@@ -322,9 +336,20 @@ elección" (sección 4).
 29. *¿Por qué microservicios y no un monolito?* Por el requisito de arquitectura distribuida y para
     repartir la carga entre máquinas: cada servicio escala por separado. Lo probamos con el motor en
     dos nodos.
-30. *¿Por qué el simulador en Java y no en Python, como sugiere el enunciado?* El curso exige Java;
-    además reutiliza los mismos contratos de eventos (módulo `common`) y permite escenarios
-    reproducibles con una API para la demo.
+30. *¿Por qué Java? ¿Y por qué el simulador en Java y no en Python, como sugiere el enunciado?* Java
+    no es obligatorio: fue una **preferencia del equipo**, y la sostenemos con razones técnicas:
+    - Kafka se desarrolla en Java y Scala y su cliente oficial es Java; Spring for Apache Kafka nos
+      dio reintentos y manejo de errores con poca configuración, y el particionador por zona es una
+      clase Java que el cliente carga tal cual.
+    - Un solo lenguaje: el simulador reutiliza los contratos de eventos del módulo `common`, así que
+      un campo nuevo se cambia una vez y el compilador avisa dónde no cuadra.
+    - Spring Boot trae salud, métricas para Prometheus, seguridad, Flyway y ShedLock sin piezas extra.
+    - El rendimiento sobra: en el pico ×20 el p95 fue de 67 ms contra un objetivo de 2 s.
+    - Lo que cuesta: 280–390 MB y 10–16 s de arranque por servicio. Go o Python serían más livianos;
+      lo aceptamos porque las PCs lo soportan y Kafka guarda los eventos mientras un servicio arranca.
+
+    El enunciado presenta Python como herramienta *sugerida* (sección 2.2), no como requisito, y su
+    stack se puede modificar si un ADR lo respalda (sección 5): eso es el ADR-010.
 
 **Generales**
 
@@ -337,8 +362,11 @@ elección" (sección 4).
 32. *¿Qué aprendieron de las pruebas?* Que probar los escenarios de falla descubre defectos que el
     camino feliz no muestra. Primero encontramos 4 (entre ellos el spool sin permisos de escritura);
     después, apagando de verdad cada servidor, otras 8 brechas entre lo que el ADR prometía y lo que
-    el sistema hacía (por ejemplo, un robo durante la caída de A clasificado como falso positivo).
-    Todas están corregidas y vueltas a probar (ver `docs/resultados.md` y ADR-006).
+    el sistema hacía (por ejemplo, un robo durante la caída de A clasificado como falso positivo); al
+    grabar el video, 3 defectos más (un segundo robo que salía a los 90 s, la placa ajena en R6 y el
+    mapa sin internet); y en la revisión final contra el enunciado, 10 más (por ejemplo, las 12 zonas
+    en 7 particiones y la dependencia de los relojes). Todas están corregidas y vueltas a probar (ver
+    `docs/resultados.md` y ADR-006).
 33. *¿Cómo se compara con casos reales?* Ver la sección 5.
 
 ---
@@ -375,7 +403,7 @@ Se sugiere que cada integrante domine un bloque y que todos puedan explicar la t
 - [ ] Abrir el informe en Word y actualizar el índice: clic derecho → *Actualizar campos*.
 - [ ] Revisar el formato: carta, Arial 12, interlineado 1.5, márgenes de 2.54 cm, sangría y numeración.
 - [ ] Construir las imágenes en casa y llevarlas al laboratorio (`centinela.cmd exportar-imagenes`
-  y, allá, `centinela.cmd importar-imagenes`).
+  y, allá, `centinela.cmd importar-imagenes` y `centinela.cmd iniciar`, sin `-Compilar`).
 - [ ] Ensayar el guion de la demo (`docs/manual-operacion.md`, sección 4) al menos una vez en las
   máquinas reales, incluida la caída de B y de A.
 - [ ] Cambiar contraseñas y la llave HMAC en `.env`.
@@ -383,3 +411,7 @@ Se sugiere que cada integrante domine un bloque y que todos puedan explicar la t
   `centinela.cmd estado` avisa si hay desfase.
 - [ ] Correr `centinela.cmd puertos` y `centinela.cmd firewall` en cada PC del laboratorio.
 - [ ] Tener listo el plan B: todo en una sola laptop (`centinela.cmd configurar` → una sola PC).
+- [ ] Exportar los PDF finales desde Word en Windows (así incrustan Arial) y revisar una impresión de
+  prueba de las figuras.
+- [ ] Repasar la defensa de Java (pregunta 30 y ADR-010): no es un requisito del enunciado, fue una
+  preferencia del equipo, y el jurado puede preguntar por qué no Python o Go.

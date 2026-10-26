@@ -25,7 +25,8 @@ Airflow a esta escala?** Las tareas que necesita el sistema son:
 
 Son **7 tareas independientes, cortas (de milisegundos a segundos) y sin dependencias entre sí**. No
 hay flujos de varios pasos, reintentos encadenados ni reprocesos de fechas pasadas (*backfill*).
-Restricción adicional: el curso exige programar en Java, y Airflow solo acepta flujos (DAGs) en Python.
+Consideración adicional: el equipo decidió escribir todo el sistema en Java (ADR-010), y Airflow solo
+acepta flujos (DAGs) en Python, lo que sumaría un segundo lenguaje y un segundo entorno que mantener.
 
 ## Opciones consideradas
 
@@ -34,7 +35,7 @@ Restricción adicional: el curso exige programar en Java, y Airflow solo acepta 
 | Para qué está pensado | Flujos de datos complejos con dependencias (DAGs) | Planificación avanzada (calendarios, persistencia de disparos) | Tareas periódicas simples dentro de la aplicación |
 | Componentes extra | Webserver, scheduler, workers, base de metadatos y, opcionalmente, Redis/Celery | Tablas de Quartz en la base de datos | Una tabla (`shedlock`) |
 | RAM adicional | ≈ 2–4 GB | ≈ 0 (dentro de la JVM) | ≈ 0 (dentro de la JVM) |
-| Lenguaje de las tareas | **Python** (choca con "Java obligatorio") | Java | Java |
+| Lenguaje de las tareas | **Python** (un segundo lenguaje en un sistema escrito todo en Java, ADR-010) | Java | Java |
 | Interfaz para ver ejecuciones | Excelente | No | No (se usa la auditoría, los logs y Grafana) |
 | Evitar ejecuciones duplicadas con varias instancias | Sí | Sí (clúster) | Sí (bloqueo distribuido en la base de datos) |
 | Curva de aprendizaje | Alta | Media | Baja (anotaciones) |

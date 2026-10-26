@@ -41,15 +41,17 @@ uno escala y falla de forma independiente.
 Todas las PCs del laboratorio son Windows: cada nodo se configura y se levanta con `centinela.cmd`
 (`configurar -Nodo A`, `firewall`, `iniciar`), que llama a Docker Compose con el archivo del nodo. Los
 contenedores son Linux, pero Docker Desktop los ejecuta por su cuenta; nadie tiene que usar Linux. En
-producción el nodo A iría preferentemente en Linux de servidor ([ADR-005](adr/ADR-005-contenerizacion-y-orquestacion.md)),
-sin cambiar nada de los composes.
+producción los servidores usan Ubuntu Server 22.04 con Docker Engine ([ADR-001](adr/ADR-001-plataforma-de-despliegue.md)
+y [ADR-005](adr/ADR-005-contenerizacion-y-orquestacion.md)), sin cambiar nada de los composes.
 
 Reglas de red: ver [ADR-007](adr/ADR-007-seguridad-y-privacidad-de-datos.md) y la guía [`deploy/README.md`](../deploy/README.md).
 
 ## 4. Contratos de eventos
 
-Los contratos crudos usan **exactamente los campos de la sección 2.1 del enunciado** en el JSON (en
-español), definidos como `record` de Java en `common/src/main/java/gt/umg/centinela/common/model/raw/`.
+Los contratos crudos usan **los campos de la sección 2.1 del enunciado**, con nombres en español en
+formato JSON (`snake_case`), y agregan algunos que la simulación necesita (por ejemplo `contravia` y
+`limite_velocidad`). Están definidos como `record` de Java en
+`common/src/main/java/gt/umg/centinela/common/model/raw/`.
 
 | Sensor | Topic | Campos (JSON) |
 |---|---|---|
@@ -73,7 +75,8 @@ Ejemplo de un botón de pánico crudo:
 ```
 
 La ingesta convierte los cinco contratos a un formato común, `NormalizedEvent` (`events.normalized`,
-llave = zona):
+llave = zona; un particionador propio envía la zona N a la partición N − 1, así que las 12 zonas usan
+las 12 particiones):
 
 ```json
 {
@@ -91,7 +94,10 @@ convierten a un modelo homogéneo:
 - la zona se resuelve por nombre ("Zona 4", "Z4", "4") o por coordenadas, con un geocercado al
   centroide más cercano;
 - las anomalías se calculan por sensor: velocidad mayor al 130 % del límite, sonido crítico con
-  probabilidad ≥ 0,5, etc.
+  probabilidad ≥ 0,5, etc.;
+- el texto libre de un reporte ciudadano se conserva (recortado a 200 caracteres y con las placas
+  enmascaradas) y viaja como dato no estructurado: el motor lo agrega al **detalle** de la evidencia y
+  el operador lo lee en la consola junto con la alerta.
 
 ## 5. Modelo de datos (TimescaleDB)
 

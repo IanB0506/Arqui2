@@ -34,7 +34,9 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
 ## 2. Flujo de procesamiento de cada evento
 
 1. Llega un evento normalizado desde `events.normalized`. La llave es la zona, así que los eventos de
-   una zona llegan en orden a la misma instancia.
+   una zona llegan en orden a la misma instancia. Un particionador propio envía la zona N a la
+   partición N − 1: las 12 zonas ocupan las 12 particiones y los 12 hilos de consumo trabajan (con el
+   hash por defecto de Kafka, las 12 llaves caían en solo 7 particiones).
 2. **Abuso de dispositivo** (solo botones de pánico): si el mismo dispositivo supera 5 pánicos en 10
    minutos, se emite `DISPOSITIVO_SOSPECHOSO` y sus pánicos se ignoran durante 1 hora.
 3. **Seguimiento de placas** (solo LPR): si la placa, ya seudonimizada, pertenece a un vehículo
@@ -55,7 +57,9 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
    aporta algo **abre o actualiza el incidente** (a lo sumo una alerta o revisión por evento):
    - **NEW:** primera vez de ese tipo en esa zona (en los últimos 10 minutos).
    - **ESCALATED:** el incidente ya existía y subió de severidad o apareció una placa sospechosa.
-   - **UPDATED:** se sumó un nuevo testigo o ancla, como otro botón de pánico.
+   - **UPDATED:** se sumó un nuevo testigo que es ancla de la regla, como otro botón de pánico. La
+     evidencia adicional que no cambia la severidad (p. ej. otro reporte cuando el robo ya es
+     CRITICAL) no genera revisión, para no inundar la consola.
    - Nada nuevo: se prueba la coincidencia siguiente; si ninguna aporta, no se emite nada (se
      evitan duplicados). Probar solo la mejor era un defecto, encontrado al grabar el video: un
      segundo robo 2 a 5 minutos después del primero perdía frente a la coincidencia del primer pánico
@@ -66,10 +70,15 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
    - si ninguna alerta la usó como evidencia, se emite `POSIBLE_FALSO_POSITIVO` (severidad LOW,
      estado AUTO_CLASSIFIED);
    - si mientras tanto llegó evidencia, se emite la alerta normal (corroboración tardía);
-   - **excepción, puesta al día tras una caída:** si el motor está procesando eventos con más de
-     10 s de atraso (esperaron en Kafka o en un spool), no clasifica ningún falso positivo hasta 20 s
-     después del último evento atrasado, porque la evidencia que corrobora un pánico puede venir
-     detrás en la cola (ADR-006).
+   - **excepción, puesta al día tras una caída:** mientras alguna instancia procesa atraso no se
+     clasifica ningún falso positivo, porque la evidencia que corrobora un pánico puede venir detrás
+     en la cola (ADR-006). El atraso se detecta **sin comparar relojes de máquinas distintas**: una
+     partición con más de 50 mensajes en espera (según Kafka), eventos reenviados desde un spool o una
+     partición que no logra procesar (p. ej. Redis caído). Además, cada instancia espera 40 s al
+     arrancar, al recibir particiones en un rebalanceo y al recuperarse de una falla (más que los 30 s
+     de espera máxima entre reintentos). Antes se comparaba la hora de ingesta, puesta por el reloj de
+     otra PC, con la del motor: un desfase de 10 s entre relojes detenía para siempre los falsos
+     positivos (hallazgo de la revisión final, ver [resultados](resultados.md)).
 9. Cada alerta tiene un **ID determinista** (derivado de la regla, la zona y el evento ancla) y se
    publica **antes** de guardar el estado del incidente: si el proceso muere en medio, otra instancia
    recalcula la misma alerta con el mismo ID y la base no la duplica.
@@ -77,7 +86,10 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
 ## 3. Reglas configuradas
 
 Fuente: `correlation-engine/src/main/resources/application.yml`. Las reglas se pueden modificar sin
-recompilar; basta con reiniciar el servicio.
+recompilar: se copia la sección `correlation:` a `infra/correlation/application.yml`, que los
+contenedores del motor leen como configuración adicional, se edita y se reinicia el motor. El archivo
+debe ser el mismo en todas las PCs que corren el motor (nodo B y *workers*); los pasos están en
+`infra/correlation/LEEME.md`. Al arrancar, el motor valida las reglas y no inicia si una es inválida.
 
 ### R1 - Robo en curso (`ROBO_EN_CURSO`): fila 1 de la tabla 2.4
 
@@ -183,7 +195,7 @@ reporte, R3 abre el incidente (HIGH) y luego R2 lo escala al llegar el reporte (
 |---|---|
 | Botón presionado por error | No hay alerta de robo sin corroboración. Se clasifica como "posible falso positivo" y el operador lo verifica. |
 | Dispositivo defectuoso, vandalizado o usado como broma | Abuso de dispositivo: se ignora 1 h y se avisa al operador. |
-| Pirotecnia (cohetes, bombas de feria) | R4 exige dos señales; el disparo aislado queda como posible falso positivo. Los sonidos de fondo tienen probabilidades moderadas. |
+| Pirotecnia (cohetes, bombas de feria) | R4 exige otra fuente: dos sensores acústicos solos suman 0,65 (< 0,70), hace falta además un pánico (+0,30) o un reporte (+0,20). El disparo aislado queda como posible falso positivo. Los sonidos de fondo tienen probabilidades moderadas. |
 | La misma persona reporta varias veces | Cada fuente cuenta una sola vez por evidencia. |
 | Coincidencias (un pánico real junto a un exceso de velocidad no relacionado) | Inevitables con reglas. El operador las marca como falso positivo y alimentan el ajuste adaptativo. |
 
@@ -209,28 +221,41 @@ Cada alerta incluye:
 - **Puntaje y umbral efectivo**, por ejemplo "Puntaje 0,90 (umbral 0,70)".
 - **Descripción legible de cada evidencia**, por ejemplo: "Botón de pánico ROBO (+0,40); Exceso de
   velocidad 85 km/h (+0,30); Vehículo a alta velocidad captado por LPR, placa XYZ*** (+0,20)".
-- **Lista de eventos de evidencia** con su `event_id`, sensor, hora y peso. Con el `event_id` se
-  puede rastrear cada evento en `sensor_events` (trazabilidad).
+- **Lista de eventos de evidencia** con su `event_id`, sensor, hora, peso y **detalle**: el dato no
+  estructurado o complementario del evento (el texto del reporte ciudadano con las placas
+  enmascaradas, el vehículo captado por la cámara, el sentido de circulación, la probabilidad del
+  sonido). En la consola, cada evidencia enlaza al evento guardado (`GET /api/events/{id}`), así que
+  una alerta se rastrea hasta el sensor que la originó sin abrir la base de datos (trazabilidad).
 - **Historial de revisiones** (`alert_revisions`), que muestra cómo evolucionó el incidente.
 
 ## 6. Validación
 
-- **Pruebas unitarias** (`CorrelationEngineTest`, 15 casos con las reglas reales del YAML):
+- **Pruebas unitarias** (`CorrelationEngineTest`, 17 casos con las reglas reales del YAML; con las
+  11 de resiliencia del motor son 28):
   - tabla 2.4, filas 1 y 2;
   - evidencia en otra zona;
   - autocorroboración;
   - vehículo en fuga;
   - misma placa en un incidente nuevo;
   - segundo testigo;
+  - segundo robo minutos después, con el incidente abierto;
   - abuso de dispositivo;
   - disparos;
   - pirotecnia;
   - accidente;
   - incendio;
   - lista de robados;
+  - una placa ajena a alta velocidad no corrobora al vehículo robado;
   - emergencias médicas independientes;
   - umbral adaptativo.
 - **Validación en vivo:** `POST /api/validation` en el simulador lanza los 8 escenarios a la vez, cada
   uno en su zona, y verifica en la API de alertas las 9 alertas esperadas, con su severidad mínima y
   su tiempo límite. Resultado: **9 de 9 en cada corrida**, tanto en una sola máquina como en
   multi-nodo (ver [resultados](resultados.md)).
+- **Escenarios aislados del ruido de fondo.** El tráfico de fondo trae anomalías al azar (un exceso de
+  velocidad cada ≈ 22 min por zona): con él encendido, la fila 2 de la tabla 2.4 terminaba como robo
+  en ≈ 15 % de las corridas, porque un exceso aleatorio en la Zona 10 corroboraba el pánico. Por eso
+  cada escenario corre aislado: en sus zonas el fondo solo emite lecturas normales hasta que se cierra
+  la ventana de sus reglas (último paso + 5 min 30 s) y, en las zonas de sus alertas esperadas,
+  arranca sin el historial reciente ni incidentes abiertos. El resultado ya no depende del azar, y el
+  robo de la fila 1 sale como alerta nueva aunque haya otro incidente abierto en la Zona 4.

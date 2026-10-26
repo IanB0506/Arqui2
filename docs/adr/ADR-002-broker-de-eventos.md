@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado |
+| Estado | Aceptado (revisado el 2026-10-25: particionador por zona) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-001, ADR-005, ADR-006, ADR-009 |
@@ -26,7 +26,7 @@ el broker debe correr **on-premise**.
 
 | Criterio | Apache Kafka (KRaft) | RabbitMQ | Servicio gestionado (SQS / Pub/Sub) |
 |---|---|---|---|
-| Modelo | Log distribuido y persistente: los mensajes quedan disponibles durante la retención | Colas: el mensaje se borra al consumirse | Colas o tópicos gestionados en la nube |
+| Modelo | Log distribuido y persistente: los mensajes quedan disponibles durante la retención | Colas: el mensaje se borra al consumirse (RabbitMQ Streams agrega un log persistente, pero sin grupos de consumidores con reparto automático de particiones) | Colas o tópicos gestionados en la nube |
 | Varios consumidores leyendo lo mismo | Nativo: cada grupo lleva su propio avance (offset) | Requiere un exchange *fanout* y una cola por consumidor | Pub/Sub sí; SQS requiere SNS + varias colas |
 | Reprocesar historia | Sí (reiniciar el offset) | No: el mensaje ya se borró | Limitado |
 | Orden | Garantizado por partición (llave = zona) | Por cola; se pierde con varios consumidores | SQS FIFO con límites de throughput |
@@ -51,10 +51,14 @@ Razones clave de diseño:
 - **Un topic por tipo de sensor:** una avalancha de lecturas LPR no retrasa los botones de pánico,
   porque cada topic tiene sus propios hilos consumidores. Además, cada esquema evoluciona por separado.
 - **Llave = zona en `events.normalized`:** todos los eventos de una zona llegan **en orden** a la
-  misma instancia del motor de correlación.
+  misma instancia del motor de correlación. Un particionador propio (`ZonePartitioner`) envía la zona
+  N a la partición N − 1: con el hash por defecto de Kafka, las 12 llaves "1" a "12" caían en solo 7
+  particiones (5 hilos sin trabajo y otros con tres zonas); ahora cada zona tiene su partición. Las
+  demás llaves (ids de sensor) se reparten igual que con el hash de Kafka.
 - **12 particiones:** permiten hasta 12 consumidores en paralelo por grupo, por ejemplo 2 máquinas
-  con 6 hilos cada una. Se probó con el motor repartido entre los nodos B y C: Kafka asignó 6
-  particiones a cada uno y, al apagar el nodo C, el B tomó las 12 en segundos.
+  con 6 hilos cada una. Se probó con el motor repartido entre los nodos B y C, como nodos lógicos en
+  un mismo equipo: Kafka asignó 6 particiones a cada uno, las 12 con tráfico, y al apagar el nodo C el
+  B tomó las 12 en segundos.
 - **Productor con `acks=all` e idempotencia:** el broker confirma solo lo que quedó escrito y los
   reintentos no duplican mensajes.
 
@@ -63,7 +67,8 @@ Razones clave de diseño:
 **Positivas**
 - Tres grupos de consumidores (ingestion, correlation, event-store) leen los mismos eventos sin
   estorbarse. Si la base de datos se pone lenta, la correlación en tiempo real no se entera.
-- Si un consumidor cae, los eventos esperan en Kafka (72 h) y se procesan al volver, sin pérdida.
+- Si un consumidor cae, los eventos esperan en Kafka (24 h los crudos que lee la ingesta, 72 h los
+  normalizados que leen la correlación y el almacenamiento) y se procesan al volver, sin pérdida.
 - Se puede escalar agregando instancias, sin cambiar código ni configuración.
 - Los mensajes son JSON legible: se pueden inyectar a mano con `kafka-console-producer` durante la
   demo (por ejemplo, para mostrar la DLQ).
@@ -80,5 +85,6 @@ Razones clave de diseño:
 - **Costo:** cero en licencias; corre en el servidor del nodo A ya presupuestado (ADR-001).
 - **Riesgo:** reduce el riesgo de perder eventos ante caídas parciales. Kafka es el estándar de la
   industria para este tipo de problema, así que es fácil conseguir personal y soporte.
-- **Tiempo:** la configuración ya está automatizada en Docker Compose. Crecer (más sensores, más
-  zonas) no exige rediseñar nada: basta con agregar máquinas.
+- **Tiempo:** ya está instalado y automatizado; no requiere trabajo adicional. Pasar a 3 brokers en
+  producción tomaría alrededor de una semana (instalación y pruebas). Crecer en sensores o zonas no
+  exige rediseñar nada: basta con agregar máquinas.

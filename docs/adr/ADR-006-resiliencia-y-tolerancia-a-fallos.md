@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado (revisado el 2026-10-15 tras las pruebas de caída de nodos) |
+| Estado | Aceptado (revisado el 2026-10-15 tras las pruebas de caída de nodos y el 2026-10-25 tras la revisión final) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-002, ADR-003, ADR-005, ADR-008, ADR-009 |
@@ -47,6 +47,12 @@ constancia de ellas en la sección final.
 | Estado de la correlación | En la memoria de cada proceso | **En Redis compartido** | **B**: cualquier instancia puede reemplazar a otra |
 | Detección de la caída de B | Que alguien note que la consola no carga | **Vigilante en el nodo C** + aviso en la consola | **B** |
 | Alta disponibilidad del broker | 1 broker | 3 brokers con replicación 3 | **1 en la simulación**; 3 recomendado en producción |
+
+**Lo que cuesta lo elegido:** la DLQ hay que revisarla (por eso se reprocesa sola lo pasajero y
+`centinela.cmd dlq` la resume); los reintentos sin límite podrían ocultar una dependencia caída si
+nadie mirara el atraso (por eso SLO-4 avisa al operador, ADR-008); el spool ocupa disco en la PC
+generadora; "al menos una vez" obliga a deduplicar; y el estado en Redis compartido es un componente
+más que puede fallar.
 
 ## Decisión
 
@@ -136,11 +142,21 @@ la publicación y el guardado, Kafka le entrega el evento a otra instancia, que 
 alerta con el mismo ID, y la persistencia idempotente la deja una sola vez. Nunca queda estado
 guardado de una alerta que no salió.
 
-**8. Protección contra falsos positivos en la puesta al día.** Si el motor procesa eventos con más
-de 10 s de atraso (Kafka acumuló mensajes durante una caída), lo anota en Redis
-(`correlation:backlog`, 20 s) y **ninguna instancia clasifica falsos positivos** mientras tanto: la
-evidencia que corrobora un pánico puede venir detrás en la cola. Si la publicación de un falso
-positivo falla, el ancla vuelve a la lista de pendientes.
+**8. Protección contra falsos positivos en la puesta al día.** Mientras haya atraso, **ninguna
+instancia clasifica falsos positivos**: la evidencia que corrobora un pánico puede venir detrás en la
+cola. El atraso se detecta **sin comparar relojes de PCs distintas**:
+
+- una partición con más de 50 mensajes en espera, según lo que Kafka reporta al consumidor;
+- eventos reenviados desde un spool (llegan marcados `reenviado_spool`);
+- una partición que no logra procesar (p. ej. Redis caído): se espera a que vuelva a procesar.
+
+Los dos primeros casos y la recuperación de una partición se anotan en Redis (`correlation:backlog`,
+40 s) para que todas las instancias esperen. Además, cada instancia espera 40 s al arrancar, al recibir
+particiones en un rebalanceo y al recuperarse de una falla; 40 s es más que los 30 s de espera máxima
+entre reintentos. La primera versión comparaba la hora de ingesta, puesta por el reloj de otra PC, con
+la del motor: con dos PCs desfasadas 10 s o más, el sistema se creía siempre "atrasado" y dejaba de
+clasificar falsos positivos (brecha 9). Si la publicación de un falso positivo falla, el ancla vuelve
+a la lista de pendientes.
 
 **9. Lista de placas robadas autorreparable.** La sincronización desde la base es atómica (se arma
 en una llave temporal y se renombra) y deja una llave centinela `watchlist:synced`. El alert-service
@@ -186,13 +202,14 @@ por IP), con tráfico de fondo y la consola del operador abierta en un navegador
 
 | Prueba | Resultado |
 |---|---|
-| **Caída del nodo B** (90 s) con un escenario de disparos | El vigilante declaró **NODO B SIN RESPUESTA a los 16 s** e informó "La detección continúa en: correlation-engine-nodo-c". El worker de C generó DISPAROS_CONFIRMADOS **10 s después del escenario**, con B caído. La consola mostró "Sin conexión…"; al volver B: "Conexión restablecida tras 107 s: 1 alerta…", destacada como "LLEGÓ 91 s TARDE". El SLO registró **RECUPERACIÓN**, sin modo degradado. 0 eventos perdidos. |
+| **Caída del nodo B** (93 s) con un escenario de disparos | El vigilante declaró **NODO B SIN RESPUESTA a los 16 s** e informó "La detección continúa en: correlation-engine-nodo-c". El worker de C generó DISPAROS_CONFIRMADOS **10 s después del escenario**, con B caído. La consola mostró "Sin conexión…"; al volver B: "Conexión restablecida tras 107 s: 1 alerta…", destacada como "LLEGÓ 91 s TARDE". El SLO registró **RECUPERACIÓN**, sin modo degradado. 0 eventos perdidos. |
 | **Caída del nodo A** (82 s) con un robo en curso y un pánico desde la app | El gateway respondió **202 `EN_COLA`**; el simulador guardó 4 críticos y 222 eventos de telemetría útil. Al volver A el spool se vació en 3 s, la lista de placas se recargó sola a los 20 s y el robo salió como **ROBO_EN_CURSO HIGH → CRITICAL** (antes: falso positivo). El pánico de la app generó su alerta. El vigilante dijo "Causa probable: el nodo A (datos) no responde". SLO: RECUPERACIÓN. 0 críticos perdidos. |
 | **Redis caído** 45 s con un escenario de disparos | 0 mensajes a la DLQ; un solo aviso por servicio y ninguna traza de error; la alerta salió al volver Redis. |
 | **`kill -9` del simulador** con Kafka caído | Al arrancar, el diario devolvió el evento pendiente, se reenvió y salió su alerta. 0 perdidos. |
 | 3 mensajes inválidos inyectados con `kafka-console-producer` | Los 3 llegaron a `events.dlq` como PERMANENTE, sin reintentos; el reproceso por defecto no los tocó. El resto del flujo siguió. |
 | Worker de correlación del nodo C apagado | Kafka reasignó sus 6 particiones al nodo B; una alerta de disparos se generó en 188 ms con el worker caído. Al volver, 6 y 6. |
-| Pruebas automatizadas del diario, la clasificación de fallas, la deduplicación, el gateway, el vigilante, el SLO y el motor | 95 pruebas, todas en verde (incluye: línea truncada por corte de luz, compactación, reinicio con pendientes, reintento del mismo mensaje, muerte entre publicar y guardar). |
+| **Redis congelado 2,5 min** (revisión final) con un robo cuya evidencia llegó durante la falla | El atraso de la correlación creció a 1 631 mensajes sin bajar y el monitor emitió el aviso MEDIUM "Rezago de procesamiento sostenido" (SLO-4), que llegó en vivo a la consola. Al volver Redis, el robo salió con su evidencia y ese pánico no se clasificó como falso positivo. 0 mensajes a la DLQ. |
+| Pruebas automatizadas del diario, la clasificación de fallas, la deduplicación, el gateway, el vigilante, el SLO y el motor | 119 pruebas, todas en verde (incluye: línea truncada por corte de luz, compactación, reinicio con pendientes, reintento del mismo mensaje, muerte entre publicar y guardar, relojes desfasados entre PCs, partición que no logra procesar). |
 
 ## Consecuencias
 
@@ -228,6 +245,7 @@ por IP), con tráfico de fondo y la consola del operador abierta en un navegador
 | 6 | El gateway de la app respondía 500 si caía A | Spool en el gateway, 202 `EN_COLA` (2) |
 | 7 | Lo que agotaba los reintentos iba a la DLQ y nadie lo reprocesaba | Reintentos por clase de falla (3) y reproceso de la DLQ (4) |
 | 8 | No había respaldo de la base | `pg_dump` programado y restauración (14); en producción, réplica de la base y Kafka con factor de réplica 3 |
+| 9 | Con dos PCs cuyos relojes difieren 10 s o más, el motor dejaba de clasificar falsos positivos (revisión final) | Detección del atraso por Kafka, reenvíos de spool y fallas de procesamiento, sin relojes (8) |
 
 ## Impacto en el negocio
 
@@ -236,5 +254,6 @@ por IP), con tráfico de fondo y la consola del operador abierta en un navegador
 - **Riesgo:** queda explícito qué se puede perder y qué no, una definición que el área legal y la
   dirección pueden revisar y aprobar. La pulsación de un ciudadano en peligro no se pierde aunque
   falle el servidor central, y si cae el servidor de servicios el supervisor se entera en segundos.
-- **Tiempo:** los mecanismos están incluidos y probados; la recuperación no requiere intervención
-  manual.
+- **Tiempo:** los mecanismos ya están incluidos y probados; la recuperación no requiere intervención
+  manual. La alta disponibilidad de producción tomaría unas 2 a 3 semanas (compra, instalación y
+  pruebas de los servidores adicionales).

@@ -21,13 +21,15 @@ repartidos en varias (nodos A, B y C/D).
 3. **Correlaciona** fuentes heterogéneas por zona y ventana de tiempo con un motor de evidencia
    ponderada. Por ejemplo: pánico + exceso de velocidad + placa a alta velocidad = robo en curso
    CRITICAL. Un pánico sin corroborar = posible falso positivo. También sigue vehículos en fuga entre
-   zonas y detecta dispositivos abusivos.
+   zonas y detecta dispositivos abusivos. Cada alerta explica su puntaje y lista su evidencia, con el
+   texto de los reportes ciudadanos (placas enmascaradas) y un enlace al evento original.
 4. **Alerta y visualiza:** consola del operador en vivo para validar alertas, más 3 dashboards de
    Grafana (mapa de calor, SLO y salud, análisis de falsos positivos).
-5. **Se protege solo:** SLO de latencia de 2 s con degradación controlada automática; spool en disco
-   con escritura anticipada para críticos y telemetría útil; reintentos según la clase de falla y
-   reproceso de la DLQ; un **vigilante** que anuncia la caída del servidor de servicios; respaldos de
-   la base y tareas periódicas de retención y calidad.
+5. **Se protege solo:** cuatro SLO con acción (degradación controlada ante sobrecarga y alertas de
+   sistema por recuperación, rezago o eventos críticos perdidos); spool en disco con escritura
+   anticipada para críticos y telemetría útil; reintentos según la clase de falla y reproceso de la
+   DLQ; un **vigilante** que anuncia la caída del servidor de servicios; respaldos de la base y tareas
+   periódicas de retención y calidad.
 
 ## Resultados clave
 
@@ -37,8 +39,8 @@ repartidos en varias (nodos A, B y C/D).
 | Latencia evento → alerta, pico de diseño de 270 eventos/s | **p50 = 39 ms, p95 = 67 ms** (objetivo < 2 s) |
 | Eventos críticos perdidos durante una caída del nodo A (Kafka, base y Redis) | **0** (también los de la app móvil) |
 | Caída del nodo B | Detectada por el vigilante en **16 s**; la detección sigue en el nodo C |
-| Reparto de carga entre máquinas | 6 + 6 particiones; failover en ~10 s |
-| Pruebas automatizadas | 90 (20 del motor de correlación, 34 de la librería común: diario en disco, clases de falla…) |
+| Reparto de carga entre máquinas | 6 + 6 particiones, las 12 con tráfico (particionador por zona); failover en ~10 s |
+| Pruebas automatizadas | 119 (28 del motor de correlación, 42 de la librería común: diario en disco, clases de falla, particionador…) |
 
 ## Arranque rápido
 
@@ -73,12 +75,12 @@ máquinas desde Windows: [`deploy/README.md`](deploy/README.md).
 common/              contratos de eventos, zonas, seudonimización (librería)
 sensor-simulator/    simulador de sensores, escenarios, validación automática
 ingestion-service/   validación, normalización, privacidad, DLQ, gateway REST
-correlation-engine/  motor de correlación (reglas en application.yml)
+correlation-engine/  motor de correlación (reglas en application.yml; editables en infra/correlation)
 alert-service/       persistencia, API, consola, tareas periódicas, migraciones Flyway
-infra/               Prometheus y Grafana (datasources y dashboards como código)
+infra/               Prometheus, Grafana (datasources y dashboards como código), reglas editables y respaldos
 deploy/              docker compose por nodo (A datos, B servicios, C/D generadores + workers)
 centinela.cmd/.ps1   operación completa desde Windows (configurar, iniciar, estado, demo, respaldos)
-docs/                arquitectura, ADRs, correlación, manual, resultados, guía de estudio
+docs/                arquitectura, ADRs, correlación, manual, resultados, guía de estudio, matriz de requisitos
 informe/             informe final y anexo de ADRs en Word (formato APA 7)
 ```
 
@@ -96,3 +98,4 @@ informe/             informe final y anexo de ADRs en Word (formato APA 7)
 | Manual de operación y guion de la demo | [`docs/manual-operacion.md`](docs/manual-operacion.md) |
 | Evaluación de resultados | [`docs/resultados.md`](docs/resultados.md) |
 | Guía de estudio para la defensa | [`docs/guia-de-estudio.md`](docs/guia-de-estudio.md) |
+| Matriz de requisitos del enunciado y su evidencia | [`docs/matriz-de-requisitos.md`](docs/matriz-de-requisitos.md) |

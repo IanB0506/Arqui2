@@ -84,9 +84,10 @@ de lo existente.
 
 ## Impacto en el negocio
 
-- **Costo:** sin licencias y sin un servidor adicional para Elasticsearch, lo que ahorra unos 2 GB de
-  RAM y su administración. Con la compresión, el disco del nodo A alcanza para años.
+- **Costo:** US$0 en licencias y sin comprar un servidor adicional para Elasticsearch, ni pagar su
+  administración. Con la compresión, el disco del nodo A alcanza para años.
 - **Riesgo:** PostgreSQL es una base madura de más de 25 años, con amplia disponibilidad de personal
   en Guatemala. Con el borrado automático de datos viejos, se cumple la política de retención sin
   depender de que alguien lo recuerde.
-- **Tiempo:** el esquema se crea solo al arrancar el sistema, sin pasos manuales.
+- **Tiempo:** no requiere trabajo adicional: la base se prepara sola al arrancar el sistema. Agregar
+  una réplica de la base para producción tomaría unos 2 a 3 días.

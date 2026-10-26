@@ -1,75 +1,78 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="660" viewBox="0 0 1400 660" font-family="Arial, Helvetica, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="850" viewBox="0 0 1000 850" font-family="Arial, Helvetica, sans-serif">
+  <!-- Pensada para imprimirse a 16,5 cm de ancho: el texto mas pequeno (18 px) queda en 8,4 pt.
+       Tiempos y latencias de una ejecucion real del escenario tabla-2-4 (25 de octubre de 2026, 18:23 UTC). -->
   <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
     </marker>
   </defs>
-  <rect width="1400" height="660" fill="#ffffff"/>
-  <text x="700" y="36" text-anchor="middle" font-size="23" font-weight="bold" fill="#263238">Correlacion de la tabla 2.4: evidencia ponderada en una ventana de tiempo por zona</text>
-  <text x="700" y="60" text-anchor="middle" font-size="14" fill="#546e7a">Regla R1-ROBO: ancla = boton de panico (0,40); umbral 0,70 = alerta HIGH; umbral critico 0,90 = CRITICAL; ventana [ancla - 2 min, ancla + 5 min]</text>
+  <rect width="1000" height="850" fill="#ffffff"/>
+  <text x="20" y="30" font-size="19" fill="#263238">Regla R1-ROBO: ancla = botón de pánico (0,40); alerta HIGH desde 0,70; CRITICAL desde 0,90.</text>
+  <text x="20" y="58" font-size="18" fill="#546e7a">Ventana: de 2 min antes a 5 min después del ancla, en la misma zona.</text>
 
   <!-- fila 1 -->
-  <text x="40" y="105" font-size="17" font-weight="bold" fill="#263238">Fila 1 - Zona 4, 22:05: panico + placa XYZ123 + 85 km/h</text>
-  <rect x="200" y="125" width="1000" height="150" rx="8" fill="#f5f5f5" stroke="#cfd8dc"/>
-  <line x1="220" y1="250" x2="1180" y2="250" stroke="#37474f" stroke-width="2" marker-end="url(#a)"/>
-  <g font-size="12" fill="#546e7a">
-    <text x="215" y="268">22:05:00</text><text x="415" y="268">+15 s</text><text x="475" y="268">+18 s</text><text x="1030" y="268">+90 s (Zona 8)</text>
+  <text x="20" y="104" font-size="21" font-weight="bold" fill="#263238">Fila 1 · Zona 4: pánico + placa XYZ123 + 85 km/h</text>
+  <rect x="20" y="118" width="960" height="214" rx="10" fill="#f5f5f5" stroke="#cfd8dc"/>
+  <line x1="60" y1="290" x2="950" y2="290" stroke="#37474f" stroke-width="2.5" marker-end="url(#f)"/>
+  <g font-size="18" fill="#546e7a" text-anchor="middle">
+    <text x="80" y="318">0 s</text><text x="680" y="318">+10 s</text><text x="800" y="318">+12 s</text>
   </g>
-  <circle cx="240" cy="250" r="8" fill="#e65100"/>
-  <rect x="210" y="140" width="190" height="46" rx="6" fill="#fff3e0" stroke="#e65100"/>
-  <text x="220" y="160" font-size="13" font-weight="bold" fill="#bf360c">Boton de panico ROBO</text>
-  <text x="220" y="178" font-size="12" fill="#bf360c">ancla +0,40 (puntaje 0,40)</text>
-  <line x1="240" y1="186" x2="240" y2="242" stroke="#e65100" stroke-dasharray="4 3"/>
+  <rect x="40" y="132" width="290" height="68" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="1.5"/>
+  <text x="54" y="160" font-size="19" font-weight="bold" fill="#bf360c">Botón de pánico ROBO</text>
+  <text x="54" y="186" font-size="18" fill="#bf360c">Ancla: puntaje 0,40</text>
+  <rect x="356" y="132" width="314" height="68" rx="8" fill="#f3e5f5" stroke="#8e24aa" stroke-width="1.5"/>
+  <text x="370" y="160" font-size="19" font-weight="bold" fill="#4a148c">LPR: XYZ*** a 84 km/h</text>
+  <text x="370" y="186" font-size="18" fill="#4a148c">+0,20 → 0,60: aún sin alerta</text>
+  <rect x="690" y="132" width="280" height="68" rx="8" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="704" y="160" font-size="19" font-weight="bold" fill="#0d47a1">Velocidad 85 km/h</text>
+  <text x="704" y="186" font-size="18" fill="#0d47a1">+0,30 → 0,90: CRITICAL</text>
+  <g stroke-dasharray="5 4" stroke-width="1.5">
+    <line x1="80" y1="200" x2="80" y2="280" stroke="#e65100"/>
+    <line x1="660" y1="200" x2="678" y2="280" stroke="#8e24aa"/>
+    <line x1="760" y1="200" x2="798" y2="280" stroke="#1e88e5"/>
+  </g>
+  <circle cx="80" cy="290" r="9" fill="#e65100"/>
+  <circle cx="680" cy="290" r="9" fill="#8e24aa"/>
+  <circle cx="800" cy="290" r="9" fill="#1e88e5"/>
 
-  <circle cx="440" cy="250" r="8" fill="#1e88e5"/>
-  <rect x="410" y="196" width="170" height="42" rx="6" fill="#e3f2fd" stroke="#1e88e5"/>
-  <text x="418" y="214" font-size="12" font-weight="bold" fill="#0d47a1">Velocidad 85 km/h</text>
-  <text x="418" y="230" font-size="12" fill="#0d47a1">+0,30 -&gt; 0,70 = HIGH</text>
-
-  <circle cx="500" cy="250" r="8" fill="#8e24aa"/>
-  <rect x="590" y="140" width="230" height="46" rx="6" fill="#f3e5f5" stroke="#8e24aa"/>
-  <text x="600" y="160" font-size="12" font-weight="bold" fill="#4a148c">LPR placa XYZ*** a 87 km/h</text>
-  <text x="600" y="178" font-size="12" fill="#4a148c">+0,20 -&gt; 0,90 = CRITICAL (escala)</text>
-  <line x1="590" y1="170" x2="506" y2="244" stroke="#8e24aa" stroke-dasharray="4 3"/>
-
-  <circle cx="1050" cy="250" r="8" fill="#c62828"/>
-  <rect x="930" y="140" width="250" height="62" rx="6" fill="#ffebee" stroke="#c62828"/>
-  <text x="940" y="160" font-size="12" font-weight="bold" fill="#b71c1c">Misma placa (seudonimo) en Zona 8</text>
-  <text x="940" y="178" font-size="12" fill="#b71c1c">VEHICULO_EN_FUGA, vinculada al</text>
-  <text x="940" y="194" font-size="12" fill="#b71c1c">incidente de la Zona 4</text>
-  <line x1="1050" y1="202" x2="1050" y2="242" stroke="#c62828" stroke-dasharray="4 3"/>
-
-  <!-- barra de puntaje fila 1 -->
-  <text x="40" y="320" font-size="14" font-weight="bold" fill="#263238">Puntaje del incidente</text>
-  <rect x="200" y="300" width="1000" height="30" rx="6" fill="#eceff1"/>
-  <rect x="200" y="300" width="400" height="30" rx="6" fill="#ffb74d"/>
-  <rect x="600" y="300" width="300" height="30" fill="#64b5f6"/>
-  <rect x="900" y="300" width="200" height="30" fill="#ba68c8"/>
-  <text x="400" y="320" text-anchor="middle" font-size="13" fill="#263238">panico 0,40</text>
-  <text x="750" y="320" text-anchor="middle" font-size="13" fill="#263238">velocidad 0,30</text>
-  <text x="1000" y="320" text-anchor="middle" font-size="13" fill="#263238">LPR 0,20</text>
-  <line x1="900" y1="292" x2="900" y2="340" stroke="#e65100" stroke-width="3"/>
-  <text x="900" y="356" text-anchor="middle" font-size="12" fill="#e65100">umbral 0,70</text>
-  <line x1="1100" y1="292" x2="1100" y2="340" stroke="#c62828" stroke-width="3"/>
-  <text x="1100" y="356" text-anchor="middle" font-size="12" fill="#c62828">critico 0,90</text>
-  <text x="200" y="378" font-size="13" fill="#2e7d32">Resultado medido: ROBO_EN_CURSO CRITICAL a los 18 s; latencia evento -&gt; alerta de 44 a 54 ms (resultado esperado: "alerta de robo en curso").</text>
+  <text x="20" y="373" font-size="19" font-weight="bold" fill="#263238">Puntaje</text>
+  <rect x="130" y="350" width="800" height="32" rx="6" fill="#eceff1"/>
+  <rect x="130" y="350" width="320" height="32" rx="6" fill="#ffb74d"/>
+  <rect x="450" y="350" width="160" height="32" fill="#ce93d8"/>
+  <rect x="610" y="350" width="240" height="32" fill="#90caf9"/>
+  <g font-size="18" fill="#263238" text-anchor="middle">
+    <text x="290" y="373">pánico 0,40</text><text x="530" y="373">LPR 0,20</text><text x="770" y="373">velocidad 0,30</text>
+  </g>
+  <line x1="690" y1="342" x2="690" y2="390" stroke="#e65100" stroke-width="3"/>
+  <line x1="850" y1="342" x2="850" y2="390" stroke="#c62828" stroke-width="3"/>
+  <text x="690" y="412" text-anchor="middle" font-size="18" fill="#e65100">umbral 0,70</text>
+  <text x="850" y="412" text-anchor="middle" font-size="18" fill="#c62828">crítico 0,90</text>
+  <text x="20" y="450" font-size="19" fill="#2e7d32">Resultado medido: ROBO_EN_CURSO CRITICAL a los 11,8 s, con una latencia de 19 ms.</text>
+  <text x="20" y="476" font-size="18" fill="#546e7a">Resultado esperado en el enunciado: «generación de alerta de robo en curso».</text>
 
   <!-- fila 2 -->
-  <text x="40" y="430" font-size="17" font-weight="bold" fill="#263238">Fila 2 - Zona 10, 17:22: panico sin eventos complementarios</text>
-  <rect x="200" y="450" width="1000" height="110" rx="8" fill="#f5f5f5" stroke="#cfd8dc"/>
-  <line x1="220" y1="535" x2="1180" y2="535" stroke="#37474f" stroke-width="2" marker-end="url(#a)"/>
-  <g font-size="12" fill="#546e7a"><text x="215" y="553">17:22:00</text><text x="840" y="553">+90 s (plazo de corroboracion)</text></g>
-  <circle cx="240" cy="535" r="8" fill="#e65100"/>
-  <rect x="210" y="462" width="230" height="46" rx="6" fill="#fff3e0" stroke="#e65100"/>
-  <text x="220" y="482" font-size="13" font-weight="bold" fill="#bf360c">Boton de panico PANICO</text>
-  <text x="220" y="500" font-size="12" fill="#bf360c">ancla 0,40 &lt; 0,70: queda pendiente</text>
-  <rect x="460" y="470" width="330" height="40" rx="6" fill="#ffffff" stroke="#b0bec5" stroke-dasharray="5 4"/>
-  <text x="625" y="495" text-anchor="middle" font-size="12" fill="#78909c">ninguna evidencia en la zona durante la ventana</text>
-  <circle cx="900" cy="535" r="8" fill="#7b1fa2"/>
-  <rect x="930" y="462" width="250" height="56" rx="6" fill="#f3e5f5" stroke="#7b1fa2"/>
-  <text x="940" y="482" font-size="12" font-weight="bold" fill="#4a148c">POSIBLE_FALSO_POSITIVO (LOW)</text>
-  <text x="940" y="500" font-size="12" fill="#4a148c">clasificada automaticamente;</text>
-  <text x="940" y="514" font-size="12" fill="#4a148c">el operador verifica con una llamada</text>
-  <text x="200" y="590" font-size="13" fill="#2e7d32">Resultado medido: POSIBLE_FALSO_POSITIVO a los 91 s, sin generar alerta de robo (resultado esperado: "falso positivo, sin eventos complementarios").</text>
-  <text x="200" y="620" font-size="12" fill="#607d8b">Si luego llega evidencia, el motor la integra; si el dispositivo abusa (mas de 5 panicos en 10 min) se marca DISPOSITIVO_SOSPECHOSO y se ignora 1 h.</text>
+  <text x="20" y="530" font-size="21" font-weight="bold" fill="#263238">Fila 2 · Zona 10: pánico sin eventos complementarios</text>
+  <rect x="20" y="544" width="960" height="166" rx="10" fill="#f5f5f5" stroke="#cfd8dc"/>
+  <line x1="60" y1="670" x2="950" y2="670" stroke="#37474f" stroke-width="2.5" marker-end="url(#f)"/>
+  <g font-size="18" fill="#546e7a" text-anchor="middle">
+    <text x="80" y="698">0 s</text><text x="876" y="698">+90 s: vence el plazo</text>
+  </g>
+  <rect x="40" y="558" width="300" height="68" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="1.5"/>
+  <text x="54" y="586" font-size="19" font-weight="bold" fill="#bf360c">Botón de pánico PÁNICO</text>
+  <text x="54" y="612" font-size="18" fill="#bf360c">0,40 &lt; 0,70: queda pendiente</text>
+  <rect x="370" y="568" width="290" height="48" rx="8" fill="#ffffff" stroke="#b0bec5" stroke-dasharray="6 4"/>
+  <text x="515" y="599" text-anchor="middle" font-size="18" fill="#607d8b">Ninguna evidencia en la zona</text>
+  <rect x="690" y="558" width="280" height="68" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.5"/>
+  <text x="704" y="586" font-size="18" font-weight="bold" fill="#4a148c">POSIBLE_FALSO_POSITIVO</text>
+  <text x="704" y="612" font-size="18" fill="#4a148c">Severidad LOW</text>
+  <g stroke-dasharray="5 4" stroke-width="1.5">
+    <line x1="80" y1="626" x2="80" y2="660" stroke="#e65100"/>
+    <line x1="876" y1="626" x2="876" y2="660" stroke="#7b1fa2"/>
+  </g>
+  <circle cx="80" cy="670" r="9" fill="#e65100"/>
+  <circle cx="876" cy="670" r="9" fill="#7b1fa2"/>
+  <text x="20" y="746" font-size="19" fill="#2e7d32">Resultado medido: POSIBLE_FALSO_POSITIVO a los 92 s, sin alerta de robo.</text>
+  <text x="20" y="772" font-size="18" fill="#546e7a">Resultado esperado en el enunciado: «falso positivo, sin eventos complementarios».</text>
+  <text x="20" y="812" font-size="18" fill="#546e7a">Si la evidencia llega después, el motor la integra al incidente. Más de 5 pánicos en</text>
+  <text x="20" y="836" font-size="18" fill="#546e7a">10 min marcan al dispositivo como sospechoso.</text>
 </svg>

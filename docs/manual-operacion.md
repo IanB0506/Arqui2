@@ -90,23 +90,34 @@ Cada paso corresponde a un criterio de evaluación de la sección 10.2.
 ### 4.3 Validación de correlaciones esperadas (5 %)
 
 1. Abrir la consola del operador (http://IP_B:8083) en pantalla grande.
-2. `centinela.cmd escenario tabla-2-4` (el ejemplo exacto de la tabla 2.4).
+2. `centinela.cmd escenario tabla-2-4` (el ejemplo exacto de la tabla 2.4). El script dice qué alertas
+   se esperan y que las zonas 4 y 10 quedan aisladas del ruido de fondo: el tráfico de fondo puede
+   seguir encendido y el resultado es siempre el mismo.
 3. Explicar lo que aparece en vivo:
    - a los ~12 s, **ROBO_EN_CURSO CRITICAL** en la Zona 4: pánico (0,40) + placa XYZ*** a alta
      velocidad (0,20) + 85 km/h (0,30) = 0,90. Con `escenario robo-en-curso`, que envía primero la
      velocidad, se ve cómo escala de HIGH a CRITICAL;
    - a los ~90 s, **POSIBLE_FALSO_POSITIVO** en la Zona 10;
-   - abrir "Evidencia" y leer el puntaje: así se explica la inferencia.
-4. `centinela.cmd validar`: validación automática completa (~2,5 min), termina en **9/9 PASSED**.
-5. Validar una alerta como operador ("Confirmar incidente" o "Marcar falso positivo"): alimenta el
-   ajuste adaptativo de umbrales (dashboard *Análisis de Falsos Positivos*).
+   - abrir "Evidencia" y leer el puntaje: así se explica la inferencia. Cada evidencia trae su
+     detalle (el vehículo captado, el sentido de circulación, el texto del ciudadano) y un enlace
+     "evento ..." que muestra el evento tal como quedó guardado: la alerta se rastrea hasta el sensor.
+4. Datos no estructurados: `centinela.cmd reporte "Choque fuerte en la esquina, un carro placa
+   P-512KLM se dio a la fuga" -Zona 7 -Tipo ACCIDENTE`. El reporte entra por la puerta HTTP de la app
+   y aparece en la consola con el texto del ciudadano en la evidencia y la placa enmascarada
+   (`P51***`): a los 90 s como posible falso positivo si nada lo corrobora, o antes como accidente si
+   el tráfico de fondo trae un exceso de velocidad en esa zona. `centinela.cmd panico -Zona 6` hace lo
+   mismo con un botón de pánico.
+5. `centinela.cmd validar`: validación automática completa (~2,5 min), termina en **9/9 PASSED**.
+6. Validar una alerta como operador ("Confirmar incidente" o "Marcar falso positivo"; "Cancelar" no
+   valida): alimenta el ajuste adaptativo de umbrales (dashboard *Análisis de Falsos Positivos*).
 
 ### 4.4 Presentación de resultados en Grafana (5 %)
 
 1. **Centro de Monitoreo:** mapa de calor de eventos de riesgo, alertas por severidad, tabla de
    alertas recientes, eventos por minuto, alertas por tipo y zona.
-2. **SLOs y Salud:** cumplimiento del SLO-1 (% < 2 s), p50/p95/p99, frescura, throughput, lag,
-   latencia por etapa, modo degradado y eventos en spool (críticos y telemetría).
+2. **SLOs y Salud:** los cuatro SLO arriba (SLO-1 % < 2 s, SLO-3 frescura, SLO-2 críticos perdidos,
+   SLO-4 atraso en Kafka), p50/p95/p99, throughput, lag, latencia por etapa, modo degradado, eventos
+   en spool y la tabla de incumplimientos con su causa (sobrecarga, recuperación o rezago).
 3. **Análisis de Falsos Positivos:** porcentaje de posibles falsos positivos, validaciones, calidad
    por regla y zona con su ajuste de umbral.
 
@@ -139,8 +150,9 @@ Si la red del laboratorio falla, todo el sistema corre en una sola laptop (`cent
 | | `detener [-Borrar]` | Detiene esta PC (con `-Borrar` elimina los datos, pide confirmación) |
 | | `estado` | Contenedores, salud, vigilante, conectividad entre PCs y relojes |
 | | `logs [servicio]` / `abrir` | Registros / navegador |
-| Demo | `escenarios`, `escenario <id> [-Zona] [-Velocidad]` | Escenarios de correlación |
-| | `validar`, `pico`, `fondo on\|off`, `replay` | Validación 9/9, carga, tráfico de fondo, CSV |
+| Demo | `escenarios`, `escenario <id> [-Zona] [-Velocidad]` | Escenarios de correlación, aislados del ruido de fondo (también en el otro generador) |
+| | `reporte "texto" [-Zona] [-Tipo]`, `panico [-Zona] [-Tipo]` | Reporte ciudadano o pánico por la puerta HTTP de la app |
+| | `validar`, `pico`, `fondo on\|off`, `replay` | Validación 9/9, carga y tráfico de fondo (en todos los generadores, o `-Nodo C\|D`), CSV incluido en el simulador |
 | | `caida <A\|B\|C>`, `recuperar <A\|B\|C>` | Simula la caída de un nodo y lo vuelve a encender |
 | | `particiones` | Reparto de particiones entre instancias |
 | | `dlq`, `reprocesar-dlq [-IncluirPermanentes]` | Cola de errores y su reproceso |
@@ -157,9 +169,10 @@ Si la red del laboratorio falla, todo el sistema corre en una sola laptop (`cent
 | GET | `/api/simulator/status` | Nodo, zonas, tasas, pico activo, pendientes en spool (críticos y telemetría), estado del nodo B |
 | POST | `/api/simulator/baseline?enabled=false` | Apaga o enciende el tráfico de fondo |
 | POST | `/api/simulator/burst?multiplier=20&seconds=60` | Pico de carga |
+| POST | `/api/simulator/quiet?zones=4,10&seconds=400` | Aísla zonas del ruido de fondo (lo usa `escenario` con el otro generador) |
 | GET | `/api/scenarios` | Lista de escenarios |
-| POST | `/api/scenarios/{id}?zone=4&speed=1` | Lanza un escenario (`robo-en-curso`, `falso-positivo`, `tabla-2-4`, `accidente-vial`, `disparos`, `incendio`, `vehiculo-robado`, `boton-abusivo`, `emergencia-medica`, `pico-de-carga`) |
-| POST | `/api/replay?resource=noche-de-viernes.csv&speed=2&jitter=true` | Replay CSV con aleatorización |
+| POST | `/api/scenarios/{id}?zone=4&speed=1` | Lanza un escenario (`robo-en-curso`, `falso-positivo`, `tabla-2-4`, `accidente-vial`, `disparos`, `incendio`, `vehiculo-robado`, `boton-abusivo`, `emergencia-medica`, `pico-de-carga`). La respuesta incluye las alertas esperadas y las zonas aisladas |
+| POST | `/api/replay?resource=noche-de-viernes.csv&speed=2&jitter=true` | Replay de un CSV incluido en el simulador (carpeta `replay/`), con aleatorización |
 | POST | `/api/validation?resetState=true` | Validación automática de correlaciones |
 | GET | `/api/validation/latest` | Resultado de la última validación |
 | GET | `/api/watchdog` | Vigilante: estado del nodo B (OPERATIVO / DEGRADADO / SIN_RESPUESTA), cada servicio y cada grupo de consumidores de Kafka |
@@ -187,6 +200,7 @@ evento es inválido.
 |---|---|---|---|
 | GET | `/api/alerts?since=&zoneId=&type=&status=&limit=` | OPERATOR | Alertas |
 | GET | `/api/alerts/{id}` | OPERATOR | Detalle con evidencia |
+| GET | `/api/events/{id}?at=` | OPERATOR | Evento guardado de una evidencia (trazabilidad); `at` es la hora del evento |
 | PATCH | `/api/alerts/{id}/validation` | OPERATOR | `{"resolution":"CONFIRMED"|"FALSE_POSITIVE","notes":"..."}` |
 | GET | `/api/alerts/stream` | OPERATOR | Alertas en vivo (Server-Sent Events) |
 | GET | `/api/stats/summary?minutes=60` | OPERATOR | Resumen para la consola |
@@ -194,7 +208,8 @@ evento es inválido.
 | GET | `/api/console/config` | OPERATOR | Configuración de la consola (puerto de Grafana) |
 | GET/POST/DELETE | `/api/watchlist` | ADMIN (para modificar) | Lista de placas robadas (se guarda seudonimizada) |
 | POST | `/api/admin/jobs/{rule-quality|slo|plate-retention|alert-expiry|watchlist}` | ADMIN | Ejecuta una tarea periódica |
-| POST | `/api/admin/correlation/reset` | ADMIN | Limpia el estado temporal del motor (auditado) |
+| POST | `/api/admin/correlation/reset[?zonas=4,10]` | ADMIN | Limpia el estado temporal del motor; con `zonas`, solo el historial y los incidentes abiertos de esas zonas (auditado) |
+| POST | `/api/admin/slo/lost-critical-events` | ADMIN | Un simulador informa eventos críticos perdidos (SLO-2): alerta CRITICAL en la consola (auditado) |
 | GET | `/api/admin/dlq?ultimos=15` | ADMIN | Resumen de la DLQ: total por clase de falla y últimos mensajes |
 | POST | `/api/admin/dlq/reprocess?incluirPermanentes=false` | ADMIN | Reinyecta la DLQ en su topic original (auditado) |
 
@@ -220,8 +235,13 @@ Redis o Kafka estén caídos: el proceso vive) y `/actuator/prometheus`.
 Las zonas de cada generador (`SIMULATOR_ZONES`) las calcula `centinela.cmd` según `GENERATOR_IPS`:
 con una IP, C simula las 12; con dos, C simula 1-6 y D 7-12.
 
-**Propiedades avanzadas** (se cambian en el `application.yml` del servicio y se vuelve a compilar
-con `centinela.cmd iniciar -Compilar`):
+**Reglas de correlación** sin recompilar: se copia la sección `correlation:` a
+`infra/correlation/application.yml`, se edita y se reinicia el motor en cada PC que lo corre (pasos en
+`infra/correlation/LEEME.md`).
+
+**Propiedades avanzadas** (se cambian en el `application.yml` del servicio y se vuelve a compilar:
+con `BUILD_TARGET=runtime` basta `centinela.cmd iniciar -Compilar`; con `BUILD_TARGET=prebuilt`,
+primero `centinela.cmd compilar`):
 
 | Propiedad | Servicio | Valor por defecto |
 |---|---|---|
@@ -230,14 +250,15 @@ con `centinela.cmd iniciar -Compilar`):
 | `simulator.spool.telemetry-max-age`, `telemetry-max-size` | simulador | Telemetría útil en disco: 15 min / 32 MB |
 | `simulator.spool.critical-max-size` | simulador | Spool de críticos: 32 MB (≈ 100 000 eventos) |
 | `simulator.watchdog.timeout`, `interval-ms`, `failures-to-down` | simulador | Vigilante: 3 s de espera, cada 10 s, 2 fallas para declarar caído |
-| `alerts.slo.*` | alertas | SLO: 2 s en el 95 %, frescura 10 s, sobrecarga con atraso ≥ 1 000 sostenido (`overload-lag`) |
-| Reglas de correlación (`correlation.rules`) | correlación | Ver [`correlacion.md`](correlacion.md) |
+| `correlation.catch-up-lag`, `catch-up-hold` | correlación | Puesta al día: más de 50 mensajes en espera por partición; espera de 40 s |
+| `alerts.slo.*` | alertas | SLO: 2 s en el 95 %, frescura 10 s, sobrecarga o rezago con atraso ≥ 1 000 sostenido (`overload-lag`) |
+| Reglas de correlación (`correlation.rules`) | correlación | Ver [`correlacion.md`](correlacion.md); se editan en `infra/correlation` |
 
 ## 8. Compilar y probar
 
 ```bat
 centinela.cmd compilar                     :: compila los 5 módulos dentro de Docker
-centinela.cmd pruebas                      :: las 95 pruebas automatizadas
+centinela.cmd pruebas                      :: las 119 pruebas automatizadas
 centinela.cmd pruebas correlation-engine   :: solo el modelo de correlación
 ```
 
@@ -256,4 +277,7 @@ Con Java 21 instalado también sirve `mvnw.cmd install` (descarga Maven la prime
 | Consola: "Sin conexión con el servidor" | alert-service (nodo B) caído o red | El vigilante (`/vigilante.html`) dice qué cayó; al volver, la consola recupera lo perdido |
 | Alerta `SLO_INCUMPLIDO` HIGH ("Degradación del servicio") | Sobrecarga real: atraso grande que no baja | Levantar workers en C/D (`WORKERS=true` y `centinela.cmd iniciar`) |
 | Alerta `SLO_INCUMPLIDO` MEDIUM ("Puesta al día tras una caída") | Alertas tardías por una caída ya superada | Ninguna: es informativa, no se activa el modo degradado |
+| Alerta `SLO_INCUMPLIDO` MEDIUM ("Rezago de procesamiento sostenido") | Un consumidor no avanza (p. ej. Redis caído detiene la correlación) | `centinela.cmd estado` y el vigilante dicen qué grupo se atrasa; al volver la dependencia se pone al día solo |
+| Alerta `SLO_INCUMPLIDO` CRITICAL ("Eventos críticos perdidos") | Durante una caída larga de A, el spool del simulador se llenó o el disco falló | Revisar el disco de la PC generadora y por qué A estuvo caído; el log del simulador tiene los identificadores |
+| Al pasar de una PC a varias (o al revés), los puertos aparecen ocupados | El modo anterior sigue encendido | `configurar` e `iniciar` lo detectan y ofrecen detenerlo (los datos se conservan) |
 | Mensajes en la DLQ | Eventos inválidos (PERMANENTE) o errores no clasificados (DESCONOCIDO); las caídas de Redis o la base no llegan a la DLQ | `centinela.cmd dlq`; los DESCONOCIDO se reprocesan solos cada 5 min (hasta 3 veces) |

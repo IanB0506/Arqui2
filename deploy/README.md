@@ -12,8 +12,9 @@ tabla de nodos del enunciado (sección 6). Para una sola máquina, usar el modo 
 | D | `nodo-c/` | sensor-simulator (zonas 7-12), vigilante + *workers* opcionales | Windows 10/11 con Docker Desktop | 4 GB |
 
 El enunciado da el sistema operativo como **recomendado**, no obligatorio. Como todo corre en
-contenedores (ADR-005), los mismos archivos funcionan en Windows, Linux o macOS. Esta guía usa
-Windows en todas las PCs: solo hace falta **Docker Desktop** y una copia del repositorio. No se
+contenedores (ADR-005), los mismos archivos funcionan en Windows, Linux o macOS (en producción se
+usaría Ubuntu Server con Docker Engine, ADR-001). Esta guía usa Windows en todas las PCs del
+laboratorio: solo hace falta **Docker Desktop** y una copia del repositorio. No se
 usa bash, ni WSL a mano, ni ninguna máquina Linux (Docker Desktop administra internamente su propia
 máquina virtual).
 
@@ -58,8 +59,10 @@ Elija la opción 2 (varias PCs): el script sugiere qué nodo es la PC comparando
 `.env` y usted lo confirma. Las zonas se reparten solas: con un solo generador, C simula las 12;
 con dos, C simula 1-6 y D 7-12. En el nodo B escribe la lista de generadores para Prometheus.
 
-> Si en alguna PC el script tuvo que cambiar un puerto, lo avisa: hay que volver a copiar ese
-> `.env` a las demás PCs.
+> Si en alguna PC el script tuvo que cambiar un puerto, una IP o los *workers*, lo avisa: hay que
+> volver a copiar ese `.env` a las demás PCs. Si una PC se probó antes en modo de una sola PC, el
+> script recuerda que debe usar el `.env` de la primera PC (su propio `.env` tiene otra llave de
+> seudonimización) y ofrece detener los contenedores del modo anterior.
 
 ## 3. Levantar
 
@@ -74,7 +77,9 @@ A; si no llega, avisa (revise la IP de A en `.env`, que A esté iniciado y su fi
 porque los servicios reintentan solos.
 
 La primera vez se construyen las imágenes con Maven dentro de Docker (necesita internet y unos
-minutos). Si el laboratorio no tiene internet, ver la sección 6.
+minutos). Si el `.env` copiado dice `BUILD_TARGET=prebuilt` pero esta PC no tiene los jar compilados,
+el script lo detecta y construye con Maven igual. Si el laboratorio no tiene internet, ver la
+sección 6.
 
 Verificar desde cualquier PC:
 
@@ -132,14 +137,21 @@ Se genera `centinela-imagenes.tar`. Copiarlo a cada PC del laboratorio y ejecuta
 
 ```bat
 centinela.cmd importar-imagenes
+centinela.cmd iniciar
 ```
+
+Use `iniciar` **sin** `-Compilar`: las imágenes ya están cargadas, y `-Compilar` intentaría
+construirlas de nuevo con Maven, que sin internet falla.
 
 ## 7. Problemas frecuentes en Windows
 
 | Síntoma | Causa | Solución |
 |---|---|---|
 | `ports are not available ... forbidden by its access permissions` | Hyper-V/WSL reservaron ese puerto (rango excluido de Windows) | `centinela.cmd puertos -Arreglar` elige otros libres. Arreglo permanente (cmd como administrador, luego reiniciar): `netsh int ipv4 set dynamic tcp start=49152 num=16384` |
-| B o C no llegan al nodo A | Firewall del nodo A, IP equivocada, red Wi-Fi con aislamiento de clientes | `centinela.cmd firewall` en el nodo A; revisar las IP en `.env`; usar cable o la misma red |
+| B o C no llegan al nodo A | Firewall del nodo A, IP equivocada, red Wi-Fi con aislamiento de clientes | `centinela.cmd firewall` en el nodo A (permite la subred local y las IP de los nodos del `.env`, aunque estén en otra subred); revisar las IP en `.env`; usar cable o la misma red |
+| `configurar` detectó la IP de la red equivocada (Wi-Fi y cable a la vez) | La PC tiene dos adaptadores | El script prefiere una IP de esta PC que ya figure en el `.env` y avisa si la IP de su nodo no es de esta PC; corrija la IP cuando la pregunta |
+| Docker Desktop en modo de contenedores Windows | Se cambió el modo | El script lo detecta y lo dice: clic derecho en el ícono de Docker > *Switch to Linux containers* |
+| Con C y D, se quiere apagar el tráfico de fondo de uno solo | — | `centinela.cmd fondo off -Nodo D`; sin `-Nodo`, `fondo` y `pico` actúan en los dos generadores |
 | Se pulsó "Cancelar" en el aviso del firewall de Docker | Windows creó una regla que bloquea a Docker Desktop | `centinela.cmd firewall` la quita y abre los puertos del nodo |
 | El nodo A se reinicia por falta de memoria | La máquina virtual de Docker tiene poca RAM | `centinela.cmd requisitos` muestra la memoria; subirla en `%UserProfile%\.wslconfig` (`[wsl2]` `memory=8GB`) y reiniciar Docker Desktop |
 | La IP de una PC cambió (DHCP) | Kafka anuncia la IP vieja | Volver a ejecutar `centinela.cmd configurar` en todas las PCs con el `.env` corregido e `iniciar` |

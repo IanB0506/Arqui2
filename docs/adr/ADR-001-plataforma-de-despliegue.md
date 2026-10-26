@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado |
+| Estado | Aceptado (revisado el 2026-10-25: cifras unificadas y nodos frente al enunciado) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-002, ADR-003, ADR-005, ADR-007 |
@@ -13,7 +13,9 @@ El enunciado exige elegir y defender un modelo de despliegue para un tipo de cli
 este proyecto se definió el siguiente **cliente hipotético**:
 
 - **Municipalidad de tamaño medio** del área metropolitana de Guatemala: unos 500 000 habitantes,
-  12 zonas y un centro de monitoreo municipal que opera 24/7 junto a la Policía Municipal.
+  12 zonas y un centro de monitoreo municipal que opera 24/7 junto a la Policía Municipal. En la
+  simulación, las 12 zonas se dibujan sobre las zonas 1 a 12 de la Ciudad de Guatemala solo como
+  referencia cartográfica para el mapa; el cliente sigue siendo esa municipalidad mediana.
 - **Presupuesto de inversión limitado** y una partida de funcionamiento anual difícil de aumentar.
   Comprometer un gasto mensual en dólares que varía con el uso es un riesgo financiero y
   administrativo.
@@ -34,9 +36,9 @@ Opciones del enunciado: on-premise/LAN, híbrido (LAN + nube) y cloud-native.
 | Criterio | On-premise / LAN | Híbrido (ingesta local + analítica en nube) | Cloud-native |
 |---|---|---|---|
 | Costo inicial | Alto (hardware ≈ US$12 000) | Medio (≈ US$7 000 de hardware local) | Bajo (casi nulo) |
-| Costo recurrente | Bajo y predecible (≈ US$7 500/año) | Medio y variable (nube + salida de datos) | Alto y variable (≈ US$11 000–14 000/año + enlace dedicado) |
+| Costo recurrente | Bajo y predecible (≈ US$7 500/año) | Medio y variable (nube + salida de datos) | Alto y variable (≈ US$16 000–19 000/año: servicios + enlace dedicado) |
 | Control de los datos personales | Total: nunca salen de la red municipal | Parcial: el histórico se va a la nube | Bajo: todo en un proveedor externo |
-| Latencia sensor → alerta | Muy baja: todo en LAN (medido: p50 ≈ 50 ms) | Baja para alertas (locales), alta para histórico | Depende de internet (+60 a 120 ms por tramo hacia la región más cercana) |
+| Latencia sensor → alerta | Muy baja: todo en LAN (medido: p50 de 44 a 78 ms) | Baja para alertas (locales), alta para histórico | Depende de internet (+60 a 120 ms por tramo hacia la región más cercana) |
 | Funciona sin internet | Sí | Las alertas sí, la analítica no | No |
 | Elasticidad ante picos | No: se dimensiona para el pico | Parcial | Sí, automática |
 | Complejidad operativa | Media: hay que administrar servidores | Alta: dos entornos y su integración | Media: servicios gestionados, pero hace falta experiencia en nube |
@@ -62,7 +64,8 @@ Opciones del enunciado: on-premise/LAN, híbrido (LAN + nube) y cloud-native.
 | **Costo anual (OPEX)** | | **≈ 7 500/año** |
 | **Costo total a 3 años (TCO)** | | **≈ 34 500** |
 
-**Cloud-native** (referencia con precios de lista aproximados de un proveedor público):
+**Cloud-native** (referencia con precios de lista de Amazon Web Services para la región us-east-1,
+consultados en octubre de 2026; Amazon Web Services, s. f.-a, s. f.-b, s. f.-c):
 - Kafka gestionado con 3 brokers: ≈ US$460/mes.
 - PostgreSQL gestionado con alta disponibilidad: ≈ US$240/mes. TimescaleDB gestionado cuesta más.
 - Redis gestionado: ≈ US$50/mes.
@@ -73,8 +76,10 @@ Esto da ≈ **US$1 000/mes, unos US$12 000/año**. A eso hay que sumar un enlace
 con SLA, imprescindible porque todos los sensores dependerían de él: ≈ US$4 000–7 000/año.
 **TCO a 3 años ≈ US$48 000–57 000**, sin inversión inicial.
 
-**Híbrido:** ≈ US$7 000 de hardware local más ≈ US$400/mes de nube para histórico y analítica,
-más la salida de datos. **TCO a 3 años ≈ US$36 000–40 000**, con la complejidad de dos entornos.
+**Híbrido:** ≈ US$7 000 de hardware local, más ≈ US$4 800/año de nube para histórico y analítica
+(US$400/mes), ≈ US$4 500–5 500/año de operación de la parte local (energía, mantenimiento y
+administración) y ≈ US$300–500/año de salida de datos. **TCO a 3 años ≈ 7 000 + 3 × (9 600 a
+10 800) ≈ US$36 000–40 000**, con la complejidad de dos entornos.
 
 ### Latencia extremo a extremo esperada (on-premise)
 
@@ -84,7 +89,7 @@ más la salida de datos. **TCO a 3 años ≈ US$36 000–40 000**, con la comple
 | Ingesta (validar, normalizar, seudonimizar) | 5–20 ms | p95 de procesamiento < 10 ms |
 | Correlación (consultas a Redis en memoria) | 5–30 ms | — |
 | Persistencia y aviso a la consola | 10–50 ms | — |
-| **Total evento → alerta guardada** | **≈ 50–150 ms** | **Operación normal: p50 ≈ 45–80 ms. Pico de diseño (270 eventos/s, multi-nodo): p50 = 39 ms, p95 = 67 ms, máximo = 80 ms** |
+| **Total evento → alerta guardada** | **≈ 20–105 ms (suma de los tramos)** | **Operación normal: p50 de 44 a 78 ms. Pico de diseño (270 eventos/s, multi-nodo): p50 = 39 ms, p95 = 67 ms, máximo = 80 ms** |
 
 El objetivo de negocio (alerta en menos de 2 s, ADR-008) se cumple con mucho margen.
 
@@ -97,6 +102,21 @@ del enunciado:
 - **Nodo B:** microservicios, Prometheus y Grafana.
 - **Nodos C/D:** generación de eventos (en producción serían las pasarelas de sensores) e
   instancias adicionales de procesamiento para repartir la carga.
+
+El enunciado (sección 6) propone una distribución de referencia. Estas son las diferencias y el ADR
+que justifica cada una:
+
+| Nodo | Enunciado | Producción | Laboratorio (simulación) | Desviación |
+|---|---|---|---|---|
+| A | Kafka, Airflow, PostgreSQL, Redis; Ubuntu Server 22.04 | Kafka, PostgreSQL + TimescaleDB, Redis y respaldos; Ubuntu Server 22.04 con Docker Engine | Los mismos contenedores en Windows 10/11 con Docker Desktop | Sin Airflow: tareas con Spring Scheduler (ADR-004) |
+| B | Microservicios, Elastic, Grafana; macOS / Linux | Microservicios, Prometheus y Grafana; Ubuntu Server 22.04 con Docker Engine | Windows 10/11 con Docker Desktop | Sin Elasticsearch (ADR-003); se agrega Prometheus (ADR-008) |
+| C/D | Generación de eventos; Windows / Linux | Pasarelas de sensores; Linux | Simulador, vigilante del nodo B y *workers* opcionales; Windows 10/11 | Se agregan el vigilante (ADR-006) y los *workers* para repartir la carga (ADR-005) |
+
+En producción se usa Linux con Docker Engine, sin costo de licencias. En el laboratorio se usa
+Windows porque es el sistema de las PCs disponibles (ADR-005); los contenedores son los mismos. Las
+pruebas de varios nodos de este proyecto se hicieron con nodos lógicos (proyectos de Docker
+separados que se comunican por IP) en un solo equipo; deben repetirse en las PCs del laboratorio
+antes de la presentación.
 
 Se diseña para el pico (×20) y no para el promedio. Como evolución futura queda la opción
 **híbrida**: enviar a la nube solo agregados anónimos (conteos por zona y hora) para analítica
@@ -115,20 +135,21 @@ regional. Así se aprovecha la nube sin sacar datos personales.
 - **No hay elasticidad.** Si un evento extraordinario supera ×20 el tráfico normal, el sistema se
   degrada. Se mitiga con:
   - degradación controlada (ADR-008);
-  - escalado horizontal agregando instancias en los nodos C/D (probado en la simulación: Kafka
-    reparte las 12 particiones entre máquinas automáticamente).
+  - escalado horizontal agregando instancias en los nodos C/D (probado en la simulación con nodos
+    lógicos: Kafka reparte las 12 particiones entre las instancias automáticamente).
 - **Inversión inicial y responsabilidad de operar el hardware:** energía, respaldos y reemplazo de
   discos.
-- La alta disponibilidad real requiere duplicar el nodo A (3 brokers de Kafka y una réplica de
-  PostgreSQL). En la simulación se acepta un solo nodo A (ver ADR-006).
+- La alta disponibilidad real requiere tres máquinas para los brokers de Kafka (el quórum de KRaft) y
+  una réplica de PostgreSQL: unos US$4 000 más en hardware. En la simulación se acepta un solo nodo A
+  (ver ADR-006).
 
 ## Impacto en el negocio
 
 - **Costo:** una inversión única de unos Q93 000 y unos Q58 000 al año de funcionamiento. A 3 años
-  sale entre un 30 % y un 40 % más barato que la nube, y el gasto es predecible para el presupuesto
-  municipal.
+  (US$34 500 frente a US$48 000–57 000) sale entre un 28 % y un 40 % más barato que la nube, y el
+  gasto es predecible para el presupuesto municipal.
 - **Riesgo:** se elimina el riesgo de que los datos de placas y ubicaciones queden en manos de
   terceros, y el de quedar "ciego" si falla internet. A cambio, la municipalidad asume el riesgo de
-  operar sus servidores, mitigado con UPS, discos en espejo y respaldos diarios.
+  operar sus servidores, mitigado con UPS, discos en espejo y respaldos automáticos cada 6 horas.
 - **Tiempo de implementación:** unas 6 a 8 semanas, incluida la compra de equipo. El sistema ya
   funciona en contenedores, así que la instalación toma horas una vez que el hardware está en sitio.

@@ -2,23 +2,24 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado |
+| Estado | Aceptado (revisado el 2026-10-25: el lenguaje es una preferencia del equipo, no un requisito) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-002, ADR-003, ADR-004, ADR-005 |
 
 ## Contexto
 
-El objetivo general pide una solución basada en una **arquitectura distribuida**. El curso exige
-**Java** como lenguaje y permite Spring. El enunciado sugiere scripts de Python, JMeter o la línea de
-comandos de Kafka para simular eventos, y el stack de referencia incluye Elasticsearch y Airflow.
-Además, el grupo quiere **poder ejecutar el sistema en más de una máquina a la vez para repartir la
-carga**.
+El objetivo general pide una solución basada en una **arquitectura distribuida**. El enunciado
+**no fija el lenguaje de programación**: sugiere scripts de Python, JMeter o la línea de comandos de
+Kafka para simular eventos (sección 2.2, "herramientas sugeridas"), y su stack de referencia incluye
+Elasticsearch y Airflow. El equipo **prefirió Java** para todo el sistema; esta decisión deja por
+escrito por qué esa preferencia se sostiene con razones técnicas y qué cuesta. Además, el grupo
+quiere **poder ejecutar el sistema en más de una máquina a la vez para repartir la carga**.
 
 Hay que decidir:
 
 1. cómo dividir el sistema en componentes;
-2. con qué tecnología construirlos;
+2. con qué lenguaje y framework construirlos;
 3. qué hacer con las herramientas sugeridas que no encajan.
 
 ## Opciones consideradas
@@ -29,18 +30,32 @@ Hay que decidir:
 | Repartir la carga entre máquinas | No (todo o nada) | **Sí: cada servicio escala por separado** | Sí |
 | Aislamiento de fallas | Bajo: una falla tumba todo | Alto | Alto |
 | Complejidad operativa | Baja | Media (4 imágenes) | Alta (código duplicado) |
-| Memoria | ≈ 0,5 GB | ≈ 1,6 GB | ≈ 3 GB o más |
+| Memoria | ≈ 0,5 GB | ≈ 1,4–1,6 GB | ≈ 3 GB o más |
+
+| Criterio | **Java 21 + Spring Boot 3.5** | Python (FastAPI + confluent-kafka) | Go |
+|---|---|---|---|
+| Cliente de Kafka | **El oficial del proyecto Apache Kafka**, que se desarrolla en Java y Scala sobre la JVM; Spring for Apache Kafka agrega reintentos y manejo de errores con poca configuración, y el particionador por zona es una clase Java que el cliente carga tal cual | Envoltorio de la librería en C `librdkafka` | Envoltorio de `librdkafka` o librerías de la comunidad |
+| Contratos de eventos | **Tipado estático**: los `record` de `common` los comparten los 4 servicios y el compilador detecta un campo mal escrito | Tipado dinámico: el error aparece al ejecutar, salvo que se valide con librerías extra | Tipado estático |
+| Lo que trae el framework | **Salud, métricas para Prometheus, seguridad, migraciones (Flyway), tareas con bloqueo distribuido (ShedLock) y SSE**, todo integrado | Piezas sueltas que hay que elegir y unir | Más código propio |
+| Concurrencia | Hilos reales del sistema operativo y compilación JIT | Un proceso usa un núcleo a la vez (GIL) | Muy eficiente (*goroutines*) |
+| Memoria y arranque | **El más pesado:** 280–390 MB y 10–16 s por servicio (medido) | Menor | Mucho menor; arranque casi inmediato |
+| Pruebas | JUnit 5 y Mockito, con las reglas reales del YAML | pytest | `go test` |
+| Preferencia del equipo | **Sí** | No | No |
+| Decisión | **Elegido** | Descartado | Descartado |
 
 | Simulador | Ventaja | Desventaja | Decisión |
 |---|---|---|---|
-| Scripts de Python | Rápido de escribir | Incumple "Java obligatorio"; duplica los contratos de eventos | Descartado |
+| Scripts de Python | Rápido de escribir; el enunciado los sugiere | Segundo lenguaje que mantener; duplica los contratos de eventos (un campo nuevo habría que cambiarlo en dos lenguajes) y los escenarios no se probarían con las mismas herramientas | Descartado |
 | JMeter / Artillery | Bueno para estrés HTTP | No modela escenarios correlacionados (pánico → velocidad → fuga) | Opcional: el gateway REST de la app (`/api/v1/panic`) puede estresarse con JMeter si se desea |
 | **Simulador en Java/Spring Boot** | Reutiliza los contratos de `common`; escenarios reproducibles; API de control para la demo | Más código | **Elegido** |
 
 ## Decisión
 
 **Cuatro microservicios Spring Boot 3.5 sobre Java 21**, en un proyecto Maven de varios módulos, que
-se comunican **solo por Kafka** (estilo orientado a eventos):
+se comunican **solo por Kafka** (estilo orientado a eventos). Java es la preferencia del equipo y la
+respaldan las razones de la tabla anterior: el cliente oficial de Kafka, contratos de eventos tipados
+y compartidos, y un framework que ya trae lo que el sistema necesita. Su costo en memoria y arranque
+se acepta de forma explícita (ver Consecuencias).
 
 | Servicio | Responsabilidad | Escala con |
 |---|---|---|
@@ -59,7 +74,7 @@ Decisiones relacionadas con el stack de referencia:
 
 Calidad del código:
 
-- 95 pruebas unitarias; las del motor usan las reglas reales del YAML y las de resiliencia simulan
+- 119 pruebas unitarias; las del motor usan las reglas reales del YAML y las de resiliencia simulan
   cortes de luz, fallas de Kafka y muertes de proceso;
 - configuración externa por variables de entorno;
 - comentarios en español que explican el porqué de cada decisión.
@@ -67,7 +82,12 @@ Calidad del código:
 ## Consecuencias
 
 **Positivas**
-- Cumple el requisito de Java en el **100 % del código**, incluido el simulador.
+- **Un solo lenguaje en el 100 % del código**, incluido el simulador: un compilador, una forma de
+  probar y una imagen base para todo; un cambio en un contrato de eventos se hace una vez y el
+  compilador señala cada lugar afectado.
+- **El rendimiento alcanza con holgura:** en el pico de diseño (×20, 270 eventos/s) el p95 de punta a
+  punta fue de 67 ms contra un objetivo de 2 s; el cuello de botella medido fue la CPU compartida con
+  Kafka, no el lenguaje.
 - **Distribución real probada:** el motor de correlación corrió en dos máquinas lógicas a la vez con
   6 particiones cada una, y la validación dio 9 de 9 en modo multi-nodo.
 - Cada servicio se puede desplegar, escalar y depurar por separado. Si la base de datos falla, la
@@ -75,7 +95,11 @@ Calidad del código:
 - Spring Boot aporta salud (`/actuator/health`), métricas, seguridad y Kafka con poca configuración.
 
 **Negativas (aceptadas)**
-- Cuatro servicios Java suman unos 1,6 GB de RAM, frente a ≈ 0,5 GB de un monolito.
+- Cuatro servicios Java suman unos 1,4 a 1,6 GB de RAM (280–390 MB cada uno, medido), frente a
+  ≈ 0,5 GB de un monolito; en Go o Python ocuparían menos. Se acepta porque las PCs del laboratorio
+  tienen memoria de sobra para ello.
+- Cada servicio tarda de 10 a 16 s en arrancar (JVM más Spring). Se acepta porque el sistema arranca
+  una vez y ningún evento se pierde mientras tanto: Kafka los retiene hasta que el servicio vuelve.
 - Depurar un flujo que cruza servicios es más difícil; se mitiga con el `event_id` que viaja desde el
   sensor hasta la alerta.
 - Hay que mantener los contratos de eventos compatibles entre servicios; se resuelve con el módulo
@@ -83,9 +107,11 @@ Calidad del código:
 
 ## Impacto en el negocio
 
-- **Costo:** Java y Spring son libres y hay mucho personal disponible en Guatemala, lo que reduce el
-  costo de mantenimiento a largo plazo.
+- **Costo:** Java y Spring son libres. Java es uno de los lenguajes más usados en sistemas
+  empresariales, así que es fácil encontrar quien mantenga el sistema; Java 21 es una versión de
+  soporte extendido (LTS).
 - **Riesgo:** una falla en un componente no detiene todo el sistema. Elegir tecnologías de uso amplio
   reduce la dependencia de personas específicas.
-- **Tiempo:** el proyecto Maven compila y prueba todo con un comando (`mvn install`), y las imágenes
-  Docker se construyen igual para todos los servicios.
+- **Tiempo:** instalar el sistema en una PC nueva toma menos de una hora, descarga incluida, y se hace
+  igual para todos los servicios; un servicio o una regla nueva toma días, no semanas, porque todos
+  comparten la misma estructura y las mismas pruebas automáticas.

@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado |
+| Estado | Aceptado (revisado el 2026-10-22 tras grabar el video y el 2026-10-25 tras la revisión final) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-002, ADR-004, ADR-006, ADR-008 |
@@ -30,7 +30,7 @@ Requisitos:
 | Criterio | Reglas en código (if/else) | **Motor propio de evidencia ponderada, reglas en YAML, estado en Redis** | Kafka Streams (uniones con ventanas) | Motor CEP (Esper / Apache Flink) | Aprendizaje automático (clasificador) |
 |---|---|---|---|---|---|
 | Explicabilidad | Media | **Alta**: cada alerta lista su evidencia y su peso | Media | Media | Baja (caja negra) |
-| Cambiar reglas sin recompilar | No | **Sí** (YAML) | No | Sí (EPL/SQL) | Reentrenar |
+| Cambiar reglas sin recompilar | No | **Sí** (YAML montado desde `infra/correlation`) | No | Sí (EPL/SQL) | Reentrenar |
 | Correlacionar más de 2 fuentes con ventanas flexibles | Difícil | Sí | Complejo (uniones encadenadas) | Sí | Sí |
 | Estado compartido entre instancias | No | Sí (Redis) | Estado local por partición | Clúster propio | — |
 | Datos etiquetados necesarios | No | No | No | No | **Sí: no existen** |
@@ -57,12 +57,20 @@ Se implementa un **motor de reglas de evidencia ponderada** (`correlation-engine
 - **Incidentes:**
   - las correlaciones del mismo tipo en la misma zona durante 10 min forman **un solo incidente**;
   - se emite una revisión cuando sube la severidad o aparece la placa (ESCALATED) o cuando se suma un
-    nuevo testigo (UPDATED). No se repite la alerta.
+    nuevo testigo que es ancla, como otro pánico (UPDATED). No se repite la alerta;
+  - las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje hasta que una aporte
+    algo nuevo (corrección hecha al grabar el video: un segundo robo con el incidente abierto salía
+    recién a los 90 s);
+  - una cámara que lee **otra** placa es otro vehículo y no corrobora a un ancla de placa (R6;
+    también corregido al grabar el video).
 - **Falsos positivos:**
   - un ancla que no se corrobora en 90 s produce `POSIBLE_FALSO_POSITIVO`, con severidad baja;
   - un dispositivo que presiona pánico más de 5 veces en 10 min se marca como sospechoso y se ignora
     durante 1 h;
-  - un disparo aislado (posible pirotecnia) no basta: hacen falta 2 señales.
+  - un disparo aislado (posible pirotecnia) no basta: dos sensores acústicos solos suman 0,65
+    (< 0,70), hace falta además un pánico (+0,30) o un reporte (+0,20);
+  - mientras el sistema se pone al día tras una caída no se clasifica ningún falso positivo, porque la
+    evidencia puede venir detrás en la cola (detección sin relojes, ADR-006).
 - **Seguimiento entre zonas:** la placa de un robo queda "sospechosa" 30 min. Si aparece en otra
   zona, se genera `VEHICULO_EN_FUGA`, vinculada al incidente original.
 - **Umbrales adaptativos:** la tarea horaria de calidad (ADR-004) calcula la precisión por regla y
@@ -76,7 +84,10 @@ Se implementa un **motor de reglas de evidencia ponderada** (`correlation-engine
 
 Las 8 reglas (R1 a R7 en YAML, más el seguimiento de placas y el abuso de dispositivos) están
 documentadas en [`docs/correlacion.md`](../correlacion.md), y la configuración vive en
-`correlation-engine/src/main/resources/application.yml`.
+`correlation-engine/src/main/resources/application.yml`. Para cambiarlas sin recompilar se copia la
+sección `correlation:` a `infra/correlation/application.yml`, que los contenedores del motor leen como
+configuración adicional, y se reinicia el motor; el archivo debe ser el mismo en todas las PCs que lo
+corren. Al arrancar, el motor valida las reglas y no inicia si una es inválida.
 
 **Por qué no aprendizaje automático:** no hay datos históricos etiquetados de incidentes reales, y
 una caja negra es difícil de defender ante un juez o la ciudadanía. El diseño deja preparado el
@@ -88,10 +99,13 @@ conjunto etiquetado que haría falta para entrenar un modelo en una fase posteri
 **Positivas**
 - **Explicabilidad total:** "Robo en curso en Zona 4. Puntaje 0,90 (umbral 0,70). Evidencia: botón
   de pánico ROBO (+0,40); exceso de velocidad 85 km/h (+0,30); placa XYZ*** a 87 km/h (+0,20)".
-- Reglas ajustables por un analista sin programar; 15 pruebas unitarias usan **las mismas reglas del
-  YAML** (tabla 2.4, falsos positivos, abuso, fuga, disparos, incendio, accidente, umbral adaptativo).
+- Reglas ajustables por un analista sin programar; 17 pruebas del modelo usan **las mismas reglas del
+  YAML** (tabla 2.4, falsos positivos, abuso, fuga, disparos, incendio, accidente, segundo robo con el
+  incidente abierto, placa ajena, umbral adaptativo), y otras 11 prueban la resiliencia del motor.
 - **Validado en vivo:** 9 de 9 correlaciones esperadas detectadas en cada corrida, con latencias de
-  28 a 477 ms.
+  28 a 477 ms. Los escenarios corren aislados del ruido de fondo, así que el resultado no depende del
+  azar (antes, con el tráfico de fondo encendido, la fila 2 de la tabla 2.4 fallaba en ≈ 15 % de las
+  corridas).
 - Escala de forma horizontal: estado en Redis y llave de zona en Kafka.
 
 **Negativas (aceptadas)**
@@ -100,7 +114,9 @@ conjunto etiquetado que haría falta para entrenar un modelo en una fase posteri
 - Puede haber falsos positivos por coincidencia, por ejemplo un pánico real junto a un exceso de
   velocidad no relacionado. En la simulación aparecen y los operadores los marcan, lo que alimenta el
   ajuste de umbrales.
-- Redis es una dependencia crítica: si cae, el motor espera y reintenta hasta 2 min (ADR-006).
+- Redis es una dependencia crítica: si cae, el motor lo trata como falla transitoria y reintenta sin
+  límite (1–30 s), nada va a la DLQ y, si la caída se prolonga, el monitor de SLO avisa al operador
+  (rezago sostenido, ADR-008).
 
 ## Impacto en el negocio
 
@@ -108,5 +124,6 @@ conjunto etiquetado que haría falta para entrenar un modelo en una fase posteri
 - **Riesgo:** cada alerta se puede justificar ante la dirección, el área legal o un juez. Los falsos
   positivos, que gastan patrullas y desgastan la confianza ciudadana, se miden y se reducen con el
   uso del sistema.
-- **Tiempo:** una regla nueva, por ejemplo "aglomeración anómala", se agrega en minutos editando la
-  configuración.
+- **Tiempo:** cambiar un umbral o un peso toma minutos (editar la configuración y reiniciar el motor);
+  una regla nueva con un tipo de evidencia ya existente, por ejemplo "aglomeración anómala", se agrega
+  en una tarde con sus pruebas.

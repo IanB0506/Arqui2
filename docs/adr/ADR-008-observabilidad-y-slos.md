@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado |
+| Estado | Aceptado (revisado el 2026-10-25 tras la revisión final: acciones para SLO-2 y SLO-4) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-003, ADR-004, ADR-006, ADR-009 |
@@ -41,11 +41,21 @@ de SLO en Java** que actúa ante los incumplimientos.
 | SLO | Indicador (SLI) | Objetivo | Ventana |
 |---|---|---|---|
 | **SLO-1 Latencia de alerta** | Tiempo entre el evento que completa la correlación y la alerta **guardada y visible** en la consola, para avisos HIGH/CRITICAL (primer aviso y agravamientos) | **95 % por debajo de 2 s** | 5 min móviles |
-| **SLO-2 Pérdida de eventos críticos** | Botones de pánico y reportes en estado `lost` | **0** | Siempre |
+| **SLO-2 Pérdida de eventos críticos** | Eventos críticos (pánicos, reportes, disparos y explosiones con probabilidad ≥ 0,5; ADR-006) que no se pudieron enviar ni guardar en el spool | **0** | Siempre |
 | **SLO-3 Frescura de datos** | p95 del tiempo entre el evento y su fila guardada en TimescaleDB | **< 10 s** | 1 min |
 | **SLO-4 Rezago de procesamiento** | Atraso total de los grupos `ingestion`, `correlation`, `event-store` y `alert-store` en Kafka | < 1 000 mensajes (incumple si es ≥ 1 000 y no baja en dos mediciones seguidas) | 2 mediciones de 30 s |
 
 ### Qué ocurre cuando se incumplen
+
+Cada incumplimiento produce una **alerta de sistema `SLO_INCUMPLIDO`** que se guarda y llega **en vivo**
+a las consolas abiertas (por el mismo canal SSE que las demás alertas), además del registro en
+`slo_measurements` y del panel correspondiente en "SLOs y Salud".
+
+| SLO incumplido | Qué se hace |
+|---|---|
+| **SLO-1 o SLO-3** | Se determina la causa (tabla siguiente) y se actúa según ella |
+| **SLO-4 solo** (el atraso es de 1 000 mensajes o más y no baja, aunque la latencia y la frescura se vean bien) | Causa **REZAGO**: un consumidor está trabado (p. ej. Redis caído detiene la correlación) y, como no deja filas ni alertas nuevas, SLO-1 y SLO-3 no lo verían. Alerta MEDIUM "Rezago de procesamiento sostenido" con el procedimiento, una vez cada 10 min. No se degrada: no es exceso de eventos |
+| **SLO-2** | El simulador que no pudo guardar un evento crítico lo informa al alert-service en cuanto este responde (en una caída larga, al volver): alerta **CRITICAL** "Eventos críticos perdidos" con el nodo y la cantidad, registrada en la auditoría. El panel SLO-2 se pone en rojo de inmediato (Prometheus) |
 
 El `SloMonitorJob` corre cada 30 s (ADR-004). Si SLO-1 o SLO-3 se incumplen, primero determina la
 **causa**, porque no toda alerta tardía es una sobrecarga:
@@ -79,17 +89,19 @@ sobrecarga. Ante una SOBRECARGA:
 
 | Escenario | Volumen | p50 | p95 | Máx. | ¿Cumple SLO-1? |
 |---|---|---|---|---|---|
-| Operación normal (validación de 9 escenarios) | 13,5 ev/s | 44–78 ms | < 500 ms | 477 ms | Sí |
+| Operación normal (validación: 8 escenarios, 9 alertas) | 13,5 ev/s | 44–78 ms | < 500 ms | 477 ms | Sí |
 | Pico de diseño ×20 (versión final, multi-nodo) | 270 ev/s | 39 ms | 67 ms | 80 ms | Sí |
-| Sobrecarga ×100 (primera versión, 1 nodo) | 1 350 ev/s | 37 s | 240 s | 275 s | **No**: se activó la degradación y la alerta de sistema |
-| Sobrecarga ×100 (tras optimizar el motor) | 1 350 ev/s | 70 ms | 5,0 s | 8,4 s | **No**, pero con una mejora de 50 veces; el cuello de botella pasó a la ingesta |
-| Caída del nodo B durante 90 s (puesta al día) | 13,5 ev/s | — | 90,7 s | 90,7 s | **No**, causa **RECUPERACIÓN** (atraso 0): aviso MEDIUM, sin degradar. Antes de la corrección se clasificaba como sobrecarga y activaba la degradación por error |
+| Sobrecarga ×100 (primera versión, 1 nodo) | 1 350 ev/s pedidos, ≈ 820 procesados | 37 s | 240 s | 275 s | **No**: se activó la degradación y la alerta de sistema |
+| Sobrecarga ×100 (tras optimizar el motor) | 1 350 ev/s pedidos, ≈ 850 procesados | 70 ms | 5,0 s | 8,4 s | **No**, pero con una mejora de 50 veces; el cuello de botella pasó a la ingesta |
+| Caída del nodo B durante 93 s (puesta al día) | 13,5 ev/s | — | 90,7 s | 90,7 s | **No**, causa **RECUPERACIÓN** (atraso 0): aviso MEDIUM, sin degradar. Antes de la corrección se clasificaba como sobrecarga y activaba la degradación por error |
 
 La prueba de sobrecarga se usó como **ejercicio de capacidad**. Las métricas de lag mostraron que el
 motor de correlación era el cuello de botella. Se aplicaron dos optimizaciones: filtrar temprano los
 eventos que no pueden coincidir con ninguna regla y enviar los comandos de cada ventana a Redis en un
-solo viaje (*pipeline*). Con ellas el lag del motor quedó en 0. Más allá de unas 5 veces el pico de
-diseño, la respuesta es escalar horizontalmente (ADR-005).
+solo viaje (*pipeline*). Con ellas el lag del motor quedó en 0 y la mediana bajó de 37 s a 70 ms (más
+de 500 veces; el p95, de 240 s a 5 s, unas 50 veces). Con 5 veces el pico de diseño se pidió 1 350
+ev/s y el equipo de prueba procesó ≈ 850, unas 3 veces el pico: ahí ya se incumple el SLO-1. Por
+encima del pico de diseño, la respuesta es escalar horizontalmente (ADR-005).
 
 ## Consecuencias
 
@@ -97,18 +109,21 @@ diseño, la respuesta es escalar horizontalmente (ADR-005).
 - Los SLO son medibles, están registrados y **se aplican solos**: el sistema protege lo crítico sin
   intervención humana.
 - La trazabilidad funciona de punta a punta con el `event_id`: cada alerta lista los eventos de su
-  evidencia, que pueden buscarse en `sensor_events`.
+  evidencia, con su dato no estructurado (p. ej. el texto del reporte ciudadano), y la consola abre el
+  evento guardado con un clic (`GET /api/events/{id}`).
 - Tres dashboards provisionados como código (centro de monitoreo, SLO y salud, falsos positivos).
 
 **Negativas (aceptadas)**
 - No hay trazas distribuidas de tipo Jaeger: se considera suficiente el `event_id` más las métricas por etapa.
 - La medición de latencia depende de que los relojes de los nodos estén sincronizados; se exige el
   servicio de hora de Windows (NTP) en todas las PCs, y `centinela.cmd estado` avisa si hay desfase.
+  Un desfase solo distorsiona la medición: la detección de la puesta al día ya no usa relojes (ADR-006).
 - La degradación sacrifica detalle estadístico de tránsito (velocidades normales) mientras dura.
 
 ## Impacto en el negocio
 
-- **Costo:** Prometheus usa unos 100 MB de RAM, sin licencias.
+- **Costo:** US$0 en licencias; Prometheus y Grafana corren en el servidor B ya presupuestado
+  (ADR-001), sin hardware adicional.
 - **Riesgo:** la dirección recibe un compromiso medible ("95 % de las alertas en menos de 2 s") y
   evidencia de cumplimiento. Cuando hay sobrecarga, el sistema prioriza solo las emergencias en lugar
   de colapsar de forma pareja.

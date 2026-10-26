@@ -58,9 +58,11 @@ Detalles:
   orden esperando a que estén sanos y muestra el estado de toda la red. Los puertos publicados son
   variables de `.env`, iguales en todas las PCs.
 - **SO de cada nodo:** como todo corre en contenedores, el mismo archivo Compose funciona en Windows
-  (Docker Desktop), Linux o macOS. Se usa Windows 10/11 en todas las PCs; el SO del enunciado es
-  recomendado, no obligatorio, y la elección no cambia la arquitectura. Docker Desktop administra
-  internamente su propia máquina virtual: el equipo no instala ni opera Linux.
+  (Docker Desktop), Linux o macOS. En el **laboratorio** se usa Windows 10/11 en todas las PCs, porque
+  son las máquinas disponibles; Docker Desktop administra internamente su propia máquina virtual y el
+  equipo no instala ni opera Linux. En **producción** los servidores usan Ubuntu Server 22.04 con
+  Docker Engine, como recomienda el enunciado (ADR-001). La elección no cambia la arquitectura ni los
+  archivos Compose.
 
 **¿Por qué no Kubernetes?**
 - Su principal valor, reprogramar contenedores automáticamente y escalar según la carga, rinde a
@@ -95,8 +97,10 @@ Las imágenes ya son compatibles con Kubernetes, así que la migración no exige
 
 ## Impacto en el negocio
 
-- **Costo:** sin licencias ni hardware extra para un plano de control. Se aprovechan las máquinas que
-  ya existen.
+- **Costo:** sin hardware extra para un plano de control. En producción, Linux con Docker Engine no
+  paga licencias; Docker Desktop, que se usa en el laboratorio, es gratuito para educación pero una
+  organización del tamaño de una municipalidad pagaría suscripción, otra razón para usar Linux en los
+  servidores. Se aprovechan las máquinas que ya existen.
 - **Riesgo:** baja el riesgo operativo de la demo y del día a día, porque hay menos piezas y es más
   fácil diagnosticar. El riesgo de no tener alta disponibilidad automática se acepta para la escala
   actual y tiene definido su disparador de revisión.
