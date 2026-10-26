@@ -271,8 +271,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Latencia p95 evento -> alerta",
-      "description": "SLO: menos de 2000 ms en el 95 % de las alertas HIGH/CRITICAL",
+      "title": "Latencia p95 · 5 min",
+      "description": "SLO-1: menos de 2000 ms en el 95 % de las alertas HIGH/CRITICAL. Se mide en los ultimos 5 minutos, la ventana del SLO-1 (ADR-008), sin importar el rango del tablero: las alertas que esperaron durante una caida suben este valor solo mientras estan dentro de esos 5 minutos. La historia completa, con la causa de cada incumplimiento, esta en la serie de tiempo y en la tabla del tablero de SLO.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "timescaledb"
@@ -290,7 +290,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "timescaledb"
           },
-          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)\nFROM alert_revisions WHERE $__timeFilter(received_at) AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
+          "rawSql": "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)\nFROM alert_revisions WHERE received_at > now() - INTERVAL '5 minutes' AND status IN ('NEW','ESCALATED') AND severity IN ('HIGH','CRITICAL')",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -319,7 +319,8 @@
               }
             ]
           },
-          "decimals": 0
+          "decimals": 0,
+          "noValue": "Sin alertas"
         },
         "overrides": []
       },

@@ -1,5 +1,6 @@
 package gt.umg.centinela.alerts.api;
 
+import gt.umg.centinela.alerts.config.AlertServiceProperties;
 import gt.umg.centinela.alerts.live.AlertBroadcaster;
 import gt.umg.centinela.alerts.persistence.AlertRepository;
 import gt.umg.centinela.alerts.persistence.AlertView;
@@ -50,13 +51,15 @@ public class AlertController {
     private final AuditRepository audit;
     private final AlertBroadcaster broadcaster;
     private final EventRepository events;
+    private final Duration sloWindow;
 
     public AlertController(AlertRepository alerts, AuditRepository audit, AlertBroadcaster broadcaster,
-                           EventRepository events) {
+                           EventRepository events, AlertServiceProperties properties) {
         this.alerts = alerts;
         this.audit = audit;
         this.broadcaster = broadcaster;
         this.events = events;
+        this.sloWindow = properties.slo().window();
     }
 
     public record ValidationRequest(
@@ -111,8 +114,13 @@ public class AlertController {
 
     @GetMapping("/stats/summary")
     public Map<String, Object> summary(@RequestParam(defaultValue = "60") int minutes) {
-        Map<String, Object> result = new LinkedHashMap<>(alerts.summary(Instant.now().minus(Duration.ofMinutes(minutes))));
+        Instant now = Instant.now();
+        // Los conteos usan la ventana pedida; la latencia, la del SLO-1 (5 min): asi una caida ya superada
+        // no deja la p95 alta durante una hora
+        Map<String, Object> result = new LinkedHashMap<>(
+                alerts.summary(now.minus(Duration.ofMinutes(minutes)), now.minus(sloWindow)));
         result.put("windowMinutes", minutes);
+        result.put("latencyWindowMinutes", sloWindow.toMinutes());
         result.put("connectedConsoles", broadcaster.connected());
         return result;
     }

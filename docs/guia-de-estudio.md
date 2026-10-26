@@ -181,11 +181,18 @@ elección" (sección 4).
    - A 3 años sale ≈ US$34 500 frente a ≈ US$48 000–57 000 en la nube.
    - Aceptamos la falta de elasticidad: dimensionamos para un pico de ×20 (medido: p95 = 67 ms) y,
      si se supera, hay degradación controlada y escalado agregando *workers*.
+   - *¿Pero los nodos no se comunican por internet de todas formas?* No: se comunican por la red de
+     la municipalidad (LAN, fibra o radioenlaces propios, o un enlace privado contratado), con IP
+     privadas. Internet solo hace falta para la app ciudadana; si se cae, los botones físicos,
+     cámaras y sensores siguen detectando. En la nube, en cambio, cada evento cruzaría internet hasta
+     la región del proveedor y sin enlace no habría detección. En la demo, las PCs se hablan por el
+     switch del laboratorio.
 2. *¿Cuándo recomendarían híbrido?* Si la municipalidad quisiera analítica regional o cruzar datos
    con otras municipalidades: se enviarían a la nube **solo agregados anónimos** (conteos por zona y
    hora), nunca placas.
 3. *¿Cómo calcularon la latencia esperada?* Por tramos (LAN, ingesta, Redis, base de datos), unos
-   50–150 ms en total, y luego la **medimos**: p50 de 39 a 78 ms.
+   20–105 ms en total, y luego la **medimos**: p50 de 44 a 78 ms en operación normal y de 39 ms en
+   el pico de diseño.
 
 **Broker (ADR-002)**
 
@@ -289,6 +296,10 @@ elección" (sección 4).
       avisa.
     - Lo vimos ocurrir en la prueba de sobrecarga ×100 (sobrecarga) y en las caídas de nodos
       (recuperación).
+    - *¿Por qué la p95 sube tras una caída?* Porque las alertas que esperaron mientras el nodo estaba
+      caído llegaron tarde de verdad (70 a 92 s en nuestra prueba). La tarjeta mide los últimos
+      5 min, la ventana del SLO, así que vuelve a la normalidad unos 5 min después de recuperar; las
+      alertas nuevas salen en milisegundos y el pico queda registrado con causa RECUPERACION.
 22. *¿Cómo saben dónde está el cuello de botella?* Por el **lag de los consumidores** en Prometheus:
     en la sobrecarga el lag del motor de correlación subió a 5 762 mensajes. Optimizamos el motor y
     el lag quedó en 0.

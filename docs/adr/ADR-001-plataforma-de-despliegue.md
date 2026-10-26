@@ -103,6 +103,15 @@ del enunciado:
 - **Nodos C/D:** generación de eventos (en producción serían las pasarelas de sensores) e
   instancias adicionales de procesamiento para repartir la carga.
 
+**Por dónde viajan los datos.** On-premise no significa que los nodos se hablen por internet: todo el
+camino sensor → Kafka → servicios → consola va por la red de la municipalidad, con direcciones
+privadas. En producción, los sensores de cada zona llegan al centro de datos por fibra o radioenlaces
+municipales, o por un enlace privado contratado (APN privado o MPLS) que no pasa por internet público.
+Internet solo se usa para recibir la app ciudadana a través de la DMZ (ADR-007): si ese enlace cae,
+los botones físicos, las cámaras y los sensores siguen detectando, y la consola y Grafana siguen
+funcionando. En el laboratorio, las PCs se comunican por el switch con IP privadas, igual que en
+producción.
+
 El enunciado (sección 6) propone una distribución de referencia. Estas son las diferencias y el ADR
 que justifica cada una:
 

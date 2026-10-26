@@ -112,6 +112,9 @@ encima del pico de diseño, la respuesta es escalar horizontalmente (ADR-005).
   evidencia, con su dato no estructurado (p. ej. el texto del reporte ciudadano), y la consola abre el
   evento guardado con un clic (`GET /api/events/{id}`).
 - Tres dashboards provisionados como código (centro de monitoreo, SLO y salud, falsos positivos).
+- Las tarjetas de latencia de Grafana y de la consola miden en la ventana del SLO-1 (5 min), no en el
+  rango del tablero: tras una caída ya superada vuelven a la normalidad en unos 5 minutos, y el pico
+  queda en la serie de tiempo y en la tabla de incumplimientos, con su causa.
 
 **Negativas (aceptadas)**
 - No hay trazas distribuidas de tipo Jaeger: se considera suficiente el `event_id` más las métricas por etapa.

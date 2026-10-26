@@ -149,7 +149,8 @@ public class AlertRepository {
                 .addValue("notes", notes).addValue("at", Timestamp.from(at))) == 1;
     }
 
-    public Map<String, Object> summary(Instant since) {
+    /** Resumen de la consola: conteos desde {@code since} y p95 de latencia desde {@code latencySince}. */
+    public Map<String, Object> summary(Instant since, Instant latencySince) {
         return jdbc.queryForMap("""
                 SELECT count(*)                                                   AS total,
                        count(*) FILTER (WHERE severity = 'CRITICAL')              AS critical,
@@ -159,10 +160,10 @@ public class AlertRepository {
                        count(*) FILTER (WHERE status = 'FALSE_POSITIVE')          AS validated_false_positives,
                        count(*) FILTER (WHERE status = 'CONFIRMED')               AS confirmed,
                        (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY r.latency_ms) FROM alert_revisions r
-                        WHERE r.received_at >= :since AND r.status IN ('NEW', 'ESCALATED')
+                        WHERE r.received_at >= :latencySince AND r.status IN ('NEW', 'ESCALATED')
                           AND r.severity IN ('HIGH', 'CRITICAL'))                 AS p95_latency_ms
                 FROM alerts WHERE updated_at >= :since
-                """, Map.of("since", Timestamp.from(since)));
+                """, Map.of("since", Timestamp.from(since), "latencySince", Timestamp.from(latencySince)));
     }
 
     private static final RowMapper<AlertView> MAPPER = AlertRepository::map;

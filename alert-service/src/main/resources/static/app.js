@@ -130,7 +130,9 @@ async function loadSummary() {
   document.getElementById('s-critical').textContent = s.critical;
   document.getElementById('s-open').textContent = s.open;
   document.getElementById('s-fp').textContent = s.possible_false_positives;
-  document.getElementById('s-p95').textContent = s.p95_latency_ms == null ? '-' : `${Math.round(s.p95_latency_ms)} ms`;
+  const p95 = document.getElementById('s-p95');
+  p95.textContent = s.p95_latency_ms == null ? '-' : `${Math.round(s.p95_latency_ms)} ms`;
+  p95.title = s.p95_latency_ms == null ? `Sin alertas altas o criticas en los ultimos ${s.latencyWindowMinutes} min` : '';
 }
 
 // Aviso visible cuando se pierde la conexion con el servidor (nodo B caido o red cortada)

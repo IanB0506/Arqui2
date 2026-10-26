@@ -130,6 +130,7 @@ Cada paso corresponde a un criterio de evaluación de la sección 10.2.
 | 3 | `centinela.cmd escenario disparos` | El worker de C genera DISPAROS_CONFIRMADOS aunque B esté caído |
 | 4 | `centinela.cmd recuperar B` | La consola dice "Conexión restablecida tras N s: X alertas…" y las destaca con "LLEGÓ N s TARDE" |
 | 5 | `centinela.cmd caida A`, `escenario robo-en-curso`, `recuperar A` | El simulador guarda el pánico y la telemetría útil en disco; al volver A los reenvía y la alerta sale como **ROBO_EN_CURSO**, no como falso positivo |
+| 6 | Tablero de SLO en Grafana | Las alertas que esperaron durante la caída suben la p95 (pueden marcar decenas de segundos): es real, esas alertas llegaron tarde. Como la tarjeta mide los últimos 5 min (la ventana del SLO-1), vuelve a la normalidad unos 5 min después de recuperar; el pico queda en la serie de tiempo y en la tabla de incumplimientos con causa **RECUPERACION** |
 
 ### Plan B
 
