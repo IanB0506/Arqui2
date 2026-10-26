@@ -201,6 +201,11 @@ elección" (sección 4).
      reprocesar. En RabbitMQ el mensaje se borra al consumirse.
    - Necesitamos orden por zona (particiones con llave) y repartir la carga entre máquinas (grupos
      de consumidores).
+   - No lo elegimos por velocidad: 13,5 eventos/s (270 en el pico) los aguanta cualquier broker.
+     Lo elegimos por su modelo de log, que es justo lo que pide el problema.
+   - *¿Y RabbitMQ Streams?* Desde la 3.11 RabbitMQ tiene *super streams*, un log particionado, y
+     podría imitar este diseño; pero es una función reciente al lado de su modelo de colas. En Kafka
+     es el modelo central, con el cliente oficial en Java y Spring Kafka.
 5. *¿Qué pasa si se cae Kafka?*
    - Los eventos críticos (pánico, reportes, disparos) se escriben en disco **antes** de enviarse y
      se reenvían al volver. El gateway de la app los guarda en disco si Kafka no confirma en 3 s y

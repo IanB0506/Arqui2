@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado (revisado el 2026-10-25: particionador por zona) |
+| Estado | Aceptado (revisado el 2026-10-26: particionador por zona y comparación con RabbitMQ Streams) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-001, ADR-005, ADR-006, ADR-009 |
@@ -26,10 +26,10 @@ el broker debe correr **on-premise**.
 
 | Criterio | Apache Kafka (KRaft) | RabbitMQ | Servicio gestionado (SQS / Pub/Sub) |
 |---|---|---|---|
-| Modelo | Log distribuido y persistente: los mensajes quedan disponibles durante la retención | Colas: el mensaje se borra al consumirse (RabbitMQ Streams agrega un log persistente, pero sin grupos de consumidores con reparto automático de particiones) | Colas o tópicos gestionados en la nube |
+| Modelo | Log distribuido y persistente: los mensajes quedan disponibles durante la retención | Colas: el mensaje se borra al consumirse. Los *streams* y *super streams* (desde la versión 3.11) agregan un log particionado con un consumidor activo por partición, pero son una función reciente al lado de su modelo de colas, con menos bibliotecas y herramientas que Kafka | Colas o tópicos gestionados en la nube |
 | Varios consumidores leyendo lo mismo | Nativo: cada grupo lleva su propio avance (offset) | Requiere un exchange *fanout* y una cola por consumidor | Pub/Sub sí; SQS requiere SNS + varias colas |
-| Reprocesar historia | Sí (reiniciar el offset) | No: el mensaje ya se borró | Limitado |
-| Orden | Garantizado por partición (llave = zona) | Por cola; se pierde con varios consumidores | SQS FIFO con límites de throughput |
+| Reprocesar historia | Sí (reiniciar el offset) | Con colas no: el mensaje ya se borró; con *streams* sí | Limitado |
+| Orden | Garantizado por partición (llave = zona) | Por cola; se pierde con varios consumidores compitiendo (los *super streams* lo conservan por partición) | SQS FIFO con límites de throughput |
 | Throughput | Muy alto (cientos de miles de msg/s por broker) | Alto (decenas de miles de msg/s) | Alto, pero se paga por mensaje |
 | Escalado horizontal de consumidores | Automático (reparto de particiones) | Consumidores compitiendo; sin orden | Automático |
 | Operación on-premise | Media: desde la versión 3.3 KRaft elimina ZooKeeper | Fácil | No aplica: contradice ADR-001 |
