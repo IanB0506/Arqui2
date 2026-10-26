@@ -1,0 +1,12 @@
+# Prometheus: metricas tecnicas de los microservicios (latencias, throughput, lag de Kafka, JVM).
+# Los objetivos se leen de targets/*.json para poder agregar nodos sin reiniciar Prometheus.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: centinela
+    metrics_path: /actuator/prometheus
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*.json"]
+        refresh_interval: 30s

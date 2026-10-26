@@ -1,0 +1,84 @@
+# =============================================================================
+# NODO C / D - Generacion de eventos, vigilante de los nodos A y B, y workers opcionales
+# SO: Windows 10/11 con Docker Desktop.
+#
+#   Windows:  centinela.cmd configurar   (nodo C o D)   y luego   centinela.cmd iniciar
+#             El script reparte las zonas (C: 1-6, D: 7-12) y levanta los workers si WORKERS=true.
+#   Manual:   docker compose --env-file .env -f deploy/nodo-c/docker-compose.yml up -d
+#             Nodo D: definir SIMULATOR_ZONES=7,8,9,10,11,12 y SIMULATOR_NODE_NAME=nodo-d
+#
+# Para REPARTIR LA CARGA de procesamiento entre maquinas, levantar tambien los "workers"
+# (WORKERS=true o --profile workers). Kafka reparte automaticamente las 12 particiones entre todas
+# las instancias de cada grupo (ingestion, correlation): no hay que configurar nada mas.
+# =============================================================================
+name: centinela-nodo-c
+
+x-java-service: &java-service
+  restart: unless-stopped
+  build: &java-build
+    context: ../..
+    dockerfile: Dockerfile
+    target: ${BUILD_TARGET:-runtime}
+  environment: &java-env
+    KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP:?Defina NODE_A_IP en .env}:${KAFKA_PORT:-9092}
+    REDIS_HOST: ${NODE_A_IP}
+    REDIS_PORT: ${REDIS_PORT:-6379}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-centinela-redis}
+    PLATE_HMAC_SECRET: ${PLATE_HMAC_SECRET:-dev-cambiar-esta-llave-en-produccion}
+    NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
+    JAVA_OPTS: -Xmx384m -XX:+ExitOnOutOfMemoryError
+
+services:
+  sensor-simulator:
+    <<: *java-service
+    build: { <<: *java-build, args: { MODULE: sensor-simulator } }
+    image: centinela/sensor-simulator:1.0.0
+    ports: ["${SIMULATOR_PORT:-8080}:8080"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${NODE_A_IP}:${KAFKA_PORT:-9092}
+      ALERT_SERVICE_URL: http://${NODE_B_IP:?Defina NODE_B_IP en .env}:${ALERT_SERVICE_PORT:-8083}
+      OPERATOR_USER: ${OPERATOR_USER:-operador}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operador123}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      SIMULATOR_ZONES: ${SIMULATOR_ZONES:-1,2,3,4,5,6}
+      SIMULATOR_NODE_NAME: ${SIMULATOR_NODE_NAME:-nodo-c}
+      SIMULATOR_SPOOL_DIR: /data/spool
+      # Vigilante: revisa el nodo B por su IP (no los workers de esta PC, que usan otros puertos)
+      WATCHDOG_INGESTION_URL: http://${NODE_B_IP}:${INGESTION_PORT:-8081}/actuator/health
+      WATCHDOG_CORRELATION_URL: http://${NODE_B_IP}:${CORRELATION_PORT:-8082}/actuator/health
+      WATCHDOG_PROMETHEUS_URL: http://${NODE_B_IP}:${PROMETHEUS_PORT:-9090}/-/healthy
+      WATCHDOG_GRAFANA_URL: http://${NODE_B_IP}:${GRAFANA_PORT:-3000}/api/health
+      JAVA_OPTS: -Xmx256m -XX:+ExitOnOutOfMemoryError
+    volumes:
+      - simulator-spool:/data/spool
+    stop_grace_period: 30s
+
+  ingestion-worker:
+    <<: *java-service
+    profiles: ["workers"]
+    build: { <<: *java-build, args: { MODULE: ingestion-service } }
+    image: centinela/ingestion-service:1.0.0
+    ports: ["${WORKER_INGESTION_PORT:-8081}:8081"]
+    environment:
+      <<: *java-env
+      INGESTION_SPOOL_DIR: /data/spool
+    volumes:
+      - worker-ingestion-spool:/data/spool
+    stop_grace_period: 40s
+
+  correlation-worker:
+    <<: *java-service
+    profiles: ["workers"]
+    build: { <<: *java-build, args: { MODULE: correlation-engine } }
+    image: centinela/correlation-engine:1.0.0
+    ports: ["${WORKER_CORRELATION_PORT:-8082}:8082"]
+    environment:
+      <<: *java-env
+      SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/config/   # las mismas reglas que el nodo B (infra/correlation)
+    volumes:
+      - ../../infra/correlation:/config:ro
+
+volumes:
+  simulator-spool:
+  worker-ingestion-spool:
