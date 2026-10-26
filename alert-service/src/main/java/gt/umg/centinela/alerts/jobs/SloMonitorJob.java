@@ -1,7 +1,7 @@
 package gt.umg.centinela.alerts.jobs;
 
 import gt.umg.centinela.alerts.config.AlertServiceProperties;
-import gt.umg.centinela.alerts.persistence.AlertRepository;
+import gt.umg.centinela.alerts.live.SystemAlerts;
 import gt.umg.centinela.common.RedisKeys;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -19,7 +19,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -40,6 +39,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *       pudo medir porque algo estaba caido): son alertas que llegaron tarde por una caida ya
  *       superada. No se degrada (descartaria datos justo durante la puesta al dia); se avisa una vez
  *       al operador y se registra con su causa.</li>
+ *   <li><b>REZAGO</b> (SLO-4: atraso de 1000 mensajes o mas que no baja, aunque SLO-1 y SLO-3 se vean bien):
+ *       un consumidor trabado no deja latencias que medir. Se avisa al operador (MEDIUM) con el
+ *       procedimiento y se registra; no se degrada.</li>
  * </ul>
  * Toda medicion queda registrada (con causa y atraso) para el informe de cumplimiento.
  */
@@ -52,16 +54,17 @@ public class SloMonitorJob {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final StringRedisTemplate redis;
-    private final AlertRepository alerts;
+    private final SystemAlerts systemAlerts;
     private final AlertServiceProperties.Slo slo;
     private final ConsumerLagProbe lagProbe;
     private final AtomicReference<Double> lastP95 = new AtomicReference<>(0.0);
+    private final AtomicReference<Instant> lastLagNotice = new AtomicReference<>();
 
-    public SloMonitorJob(NamedParameterJdbcTemplate jdbc, StringRedisTemplate redis, AlertRepository alerts,
+    public SloMonitorJob(NamedParameterJdbcTemplate jdbc, StringRedisTemplate redis, SystemAlerts systemAlerts,
                          ConsumerLagProbe lagProbe, AlertServiceProperties properties, MeterRegistry metrics) {
         this.jdbc = jdbc;
         this.redis = redis;
-        this.alerts = alerts;
+        this.systemAlerts = systemAlerts;
         this.lagProbe = lagProbe;
         this.slo = properties.slo();
         metrics.gauge("alerts.slo.p95_ms", lastP95, AtomicReference::get);
@@ -99,7 +102,12 @@ public class SloMonitorJob {
         lastP95.set(p95 == null ? 0.0 : p95);
 
         Long lag = lagProbe.totalLag();
-        String cause = breached ? cause(now, lag, freshness) : null;
+        Long previousLag = lag == null ? null : previousLag(now);
+        // SLO-4 por si solo: un consumidor trabado (p. ej. la base no responde) no incumple SLO-1 ni SLO-3,
+        // porque sin filas nuevas no hay latencias que medir, pero su atraso crece medicion tras medicion
+        boolean lagBreached = lag != null && OVERLOAD.equals(classifyLag(lag, previousLag, slo.overloadLag()));
+        String cause = breached ? cause(now, lag, previousLag, freshness) : lagBreached ? SUSTAINED_LAG : null;
+        breached = breached || lagBreached;
 
         jdbc.update("""
                 INSERT INTO slo_measurements (measured_at, window_seconds, alerts, p50_ms, p95_ms, p99_ms, max_ms,
@@ -116,6 +124,8 @@ public class SloMonitorJob {
             onBreach(now, n, p95, ratio, freshness);
         } else if (RECOVERY.equals(cause)) {
             onRecoveryBreach(now, n, p95, freshness, lag);
+        } else if (SUSTAINED_LAG.equals(cause)) {
+            onSustainedLag(now, lag, previousLag);
         } else if (!breached && Boolean.TRUE.equals(redis.delete(DEGRADED_KEY))) {
             log.info("SLO recuperado: se desactiva el modo degradado");
         }
@@ -124,6 +134,9 @@ public class SloMonitorJob {
     static final String OVERLOAD = "SOBRECARGA";
     static final String RECOVERY = "RECUPERACION";
     static final String WATCHING = "EN_OBSERVACION";
+    /** SLO-4 incumplido sin que se note en la latencia ni en la frescura: un consumidor no avanza. */
+    static final String SUSTAINED_LAG = "REZAGO";
+
     /** Una medicion anterior mas vieja que esto indica que el monitor no pudo medir (hubo una caida). */
     private static final Duration CONTINUITY = Duration.ofSeconds(75);
 
@@ -133,9 +146,9 @@ public class SloMonitorJob {
      * pero baja enseguida; y como el propio monitor tampoco pudo medir durante la caida, hay un hueco
      * en las mediciones. Solo si no se puede medir el atraso se usa el ultimo minuto.
      */
-    private String cause(Instant now, Long lag, Double freshness) {
+    private String cause(Instant now, Long lag, Long previousLag, Double freshness) {
         if (lag != null) {
-            return classifyLag(lag, previousLag(now), slo.overloadLag());
+            return classifyLag(lag, previousLag, slo.overloadLag());
         }
         Map<String, Object> recent = jdbc.queryForMap("""
                 SELECT count(*) AS n, avg(CASE WHEN latency_ms <= :threshold THEN 1.0 ELSE 0.0 END) AS ratio
@@ -185,7 +198,29 @@ public class SloMonitorJob {
                         + "El atraso de los consumidores %s. No es una sobrecarga: no se activa el modo degradado.",
                 slo.window().toSeconds(), n, p95 == null ? 0 : p95, freshness == null ? 0 : freshness / 1000,
                 lag == null ? "no se pudo medir" : "es de " + lag + " mensajes (bajo o en descenso)");
-        alerts.saveSystemAlert(UUID.randomUUID(), "SLO_INCUMPLIDO", "MEDIUM", "Puesta al dia tras una caida", description, now);
+        systemAlerts.notify("MEDIUM", "Puesta al dia tras una caida", description, now);
+        log.warn(description);
+    }
+
+    /**
+     * Aviso MEDIUM (uno cada 10 min) con el procedimiento: no se degrada, porque no es exceso de eventos. El
+     * control de repeticion es local y no en Redis: el caso tipico es justamente Redis caido (la correlacion
+     * se detiene y su atraso crece).
+     */
+    private void onSustainedLag(Instant now, long lag, Long previousLag) {
+        Instant last = lastLagNotice.get();
+        if (last != null && Duration.between(last, now).compareTo(Duration.ofMinutes(10)) < 0) {
+            return;
+        }
+        lastLagNotice.set(now);
+        String description = String.format(Locale.ROOT,
+                "SLO-4 incumplido: %d mensajes pendientes en Kafka (antes %d) y no bajan. Algun consumidor (ingesta, "
+                        + "correlacion o persistencia) no avanza al ritmo de llegada. Revisar el panel de atraso por "
+                        + "servicio y 'centinela.cmd estado': si es la base de datos, la deteccion sigue en tiempo real "
+                        + "y lo historico se pone al dia al recuperarse; si es la ingesta o la correlacion, levantar "
+                        + "workers en un nodo C/D.", lag, previousLag == null ? 0 : previousLag);
+        systemAlerts.notify("MEDIUM", "Rezago de procesamiento sostenido",
+                description, now);
         log.warn(description);
     }
 
@@ -198,7 +233,7 @@ public class SloMonitorJob {
                             + "Se activo el modo degradado: la ingesta muestrea lecturas de velocidad normales.",
                     slo.window().toSeconds(), n, p95 == null ? 0 : p95, slo.latencyThresholdMs(),
                     slo.targetRatio() * 100, ratio == null ? 100 : ratio * 100, freshness == null ? 0 : freshness);
-            alerts.saveSystemAlert(UUID.randomUUID(), "SLO_INCUMPLIDO", "HIGH", "Degradacion del servicio", description, now);
+            systemAlerts.notify("HIGH", "Degradacion del servicio", description, now);
             log.warn(description);
         } else {
             redis.expire(DEGRADED_KEY, Duration.ofMinutes(2));

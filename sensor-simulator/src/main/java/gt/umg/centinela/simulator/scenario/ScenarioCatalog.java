@@ -6,6 +6,7 @@ import gt.umg.centinela.common.model.raw.CitizenEventType;
 import gt.umg.centinela.common.model.raw.PanicAlertType;
 import gt.umg.centinela.common.model.raw.ReportOrigin;
 import gt.umg.centinela.common.model.raw.SoundType;
+import gt.umg.centinela.common.privacy.PlatePseudonymizer;
 import gt.umg.centinela.simulator.config.SimulatorProperties;
 import gt.umg.centinela.simulator.generator.BaselineGenerator;
 import gt.umg.centinela.simulator.generator.EventFactory;
@@ -75,10 +76,10 @@ public class ScenarioCatalog {
                 "Fila 1: Zona 4, panico + placa XYZ123 + 85 km/h -> robo en curso. "
                         + "Fila 2: Zona 10, panico sin eventos complementarios -> falso positivo. "
                         + "La zona indicada se ignora.",
-                4, false, zone -> table24());
+                4, false, true, zone -> table24());
         add("accidente-vial", "Accidente vial",
-                "Sensor acustico detecta choque, sensor de velocidad registra 97 km/h y dos ciudadanos reportan "
-                        + "un accidente. Se espera ACCIDENTE_VIAL (primero por sensores, escala con los reportes).",
+                "Sensor acustico detecta choque, sensor de velocidad registra 97 km/h y un ciudadano reporta "
+                        + "el accidente desde la app. Se espera ACCIDENTE_VIAL (primero por sensores, escala con el reporte).",
                 7, true, this::trafficAccident);
         add("disparos", "Disparos confirmados",
                 "Dos sensores acusticos detectan disparos, un ciudadano presiona panico (ASALTO) y otro reporta un "
@@ -107,7 +108,12 @@ public class ScenarioCatalog {
 
     private void add(String id, String title, String description, int zone, boolean validation,
                      java.util.function.IntFunction<ScenarioPlan> planner) {
-        scenarios.put(id, new ScenarioDefinition(id, title, description, zone, validation, planner));
+        add(id, title, description, zone, validation, false, planner);
+    }
+
+    private void add(String id, String title, String description, int zone, boolean validation, boolean fixedZone,
+                     java.util.function.IntFunction<ScenarioPlan> planner) {
+        scenarios.put(id, new ScenarioDefinition(id, title, description, zone, validation, fixedZone, planner));
     }
 
     // ------------------------------------------------------------------ escenarios
@@ -120,21 +126,21 @@ public class ScenarioCatalog {
                 () -> publisher.publish(factory.panic(zone, PanicAlertType.ROBO, device))));
         steps.add(step(15_000, "Sensor de velocidad registra 85 km/h en Zona " + zone,
                 () -> publisher.publish(factory.speed(zone, 2, 85, false))));
-        steps.add(step(18_000, "Camara LPR lee placa " + EXAMPLE_PLATE + " a 87 km/h en Zona " + zone,
+        steps.add(step(18_000, "Camara LPR lee placa " + masked(EXAMPLE_PLATE) + " a 87 km/h en Zona " + zone,
                 () -> publisher.publish(factory.lpr(zone, 1, EXAMPLE_PLATE, 87))));
         List<ExpectedAlert> expected = new ArrayList<>();
         expected.add(new ExpectedAlert("ROBO_EN_CURSO", zone, 30, "CRITICAL"));
         long offset = 90_000;
         for (int next : route) {
             double speed = 90 + (offset / 30_000.0);
-            steps.add(step(offset, "Placa " + EXAMPLE_PLATE + " detectada en fuga en Zona " + next,
+            steps.add(step(offset, "Placa " + masked(EXAMPLE_PLATE) + " detectada en fuga en Zona " + next,
                     () -> publisher.publish(factory.lpr(next, 2, EXAMPLE_PLATE, speed))));
             offset += 60_000;
         }
         if (!route.isEmpty()) {
             expected.add(new ExpectedAlert("VEHICULO_EN_FUGA", route.get(0), 110, "HIGH"));
         }
-        return new ScenarioPlan(steps, expected);
+        return new ScenarioPlan(steps, expected, withRoute(zone, route));
     }
 
     private ScenarioPlan falsePositive(int zone) {
@@ -153,7 +159,7 @@ public class ScenarioCatalog {
                         () -> publisher.publish(factory.panic(4, PanicAlertType.ROBO, device))),
                 step(0, "Fila 2: Boton de panico en Zona 10",
                         () -> publisher.publish(factory.panic(10, PanicAlertType.PANICO, device2))),
-                step(10_000, "Fila 1: Lectura LPR placa XYZ123 en Zona 4",
+                step(10_000, "Fila 1: Lectura LPR placa " + masked(EXAMPLE_PLATE) + " en Zona 4",
                         () -> publisher.publish(factory.lpr(4, 1, EXAMPLE_PLATE, 84))),
                 step(12_000, "Fila 1: Sensor de velocidad 85 km/h en Zona 4",
                         () -> publisher.publish(factory.speed(4, 2, 85, false)))),
@@ -206,13 +212,14 @@ public class ScenarioCatalog {
         String plate = properties.getWatchlistPlates().isEmpty() ? "P512KLM" : properties.getWatchlistPlates().get(0);
         List<Integer> route = fleeRoute(zone, 1);
         List<ScenarioStep> steps = new ArrayList<>();
-        steps.add(step(0, "Camara LPR lee placa en lista de robados " + plate + " (55 km/h)",
+        steps.add(step(0, "Camara LPR lee placa en lista de robados " + masked(plate) + " (55 km/h)",
                 () -> publisher.publish(factory.lpr(zone, 3, plate, 55))));
         for (int next : route) {
             steps.add(step(60_000, "La misma placa aparece en Zona " + next,
                     () -> publisher.publish(factory.lpr(next, 1, plate, 68))));
         }
-        return new ScenarioPlan(steps, List.of(new ExpectedAlert("VEHICULO_REPORTADO", zone, 20, "HIGH")));
+        return new ScenarioPlan(steps, List.of(new ExpectedAlert("VEHICULO_REPORTADO", zone, 20, "HIGH")),
+                withRoute(zone, route));
     }
 
     private ScenarioPlan abusiveDevice(int zone) {
@@ -237,16 +244,28 @@ public class ScenarioCatalog {
     private ScenarioPlan loadPeak(int zone) {
         List<ScenarioStep> steps = new ArrayList<>();
         steps.add(step(0, "Inicio de pico de carga x20 durante 60 s", () -> baseline.startBurst(20, 60)));
-        for (ScenarioStep s : robbery(zone).steps()) {
+        ScenarioPlan robbery = robbery(zone);
+        for (ScenarioStep s : robbery.steps()) {
             steps.add(step(20_000 + s.offsetMillis(), "[bajo carga] " + s.description(), s.action()));
         }
-        return new ScenarioPlan(steps, List.of(new ExpectedAlert("ROBO_EN_CURSO", zone, 60, "CRITICAL")));
+        return new ScenarioPlan(steps, List.of(new ExpectedAlert("ROBO_EN_CURSO", zone, 60, "CRITICAL")), robbery.zones());
     }
 
     // ------------------------------------------------------------------ utilidades
 
+    /** Los pasos van al log y a la API: la placa se muestra enmascarada, como al operador (ADR-007). */
+    private static String masked(String plate) {
+        return PlatePseudonymizer.maskPlate(plate);
+    }
+
     private static ScenarioStep step(long offset, String description, Runnable action) {
         return new ScenarioStep(offset, description, action);
+    }
+
+    private static List<Integer> withRoute(int zone, List<Integer> route) {
+        List<Integer> zones = new ArrayList<>(List.of(zone));
+        zones.addAll(route);
+        return zones;
     }
 
     /** Ruta de huida determinista: siempre "hacia el sur" (fila mayor), sin repetir zonas. */

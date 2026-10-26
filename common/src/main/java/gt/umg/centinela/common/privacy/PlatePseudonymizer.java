@@ -6,6 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Seudonimizacion de datos personales (placas e identificadores de ciudadanos).
@@ -19,6 +21,12 @@ import java.util.Locale;
 public final class PlatePseudonymizer {
 
     private static final String ALGORITHM = "HmacSHA256";
+    /**
+     * Placas escritas en texto libre: formato de Guatemala (tipo P, M, C, A, O, U o T + 3 digitos + 3 letras,
+     * con o sin guion o espacio) y el formato del ejemplo del enunciado (XYZ123).
+     */
+    private static final Pattern PLATE_IN_TEXT = Pattern.compile(
+            "\\b(?:[PMCAOUT][-\\s]?\\d{3}[-\\s]?[A-Z]{3}|[A-Z]{3}-?\\d{3})\\b", Pattern.CASE_INSENSITIVE);
     private final SecretKeySpec key;
 
     public PlatePseudonymizer(String secret) {
@@ -41,6 +49,15 @@ public final class PlatePseudonymizer {
     /** Seudonimo estable de un identificador de ciudadano o dispositivo. */
     public String pseudonymizeId(String id) {
         return id == null || id.isBlank() ? null : hmac("ID:" + id);
+    }
+
+    /**
+     * Enmascara las placas que un ciudadano escriba en un mensaje ("vi la placa P-512KLM" -> "vi la placa P51***"):
+     * la placa en claro no se guarda ni se muestra, igual que en las lecturas de las camaras.
+     */
+    public static String maskPlatesInText(String text) {
+        return text == null ? null
+                : PLATE_IN_TEXT.matcher(text).replaceAll(m -> Matcher.quoteReplacement(maskPlate(m.group())));
     }
 
     /** Placa enmascarada para mostrar a operadores: conserva los 3 primeros caracteres ("XYZ***"). */

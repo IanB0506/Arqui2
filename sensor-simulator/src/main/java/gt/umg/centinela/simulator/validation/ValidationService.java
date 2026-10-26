@@ -2,6 +2,7 @@ package gt.umg.centinela.simulator.validation;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import gt.umg.centinela.common.model.Severity;
+import gt.umg.centinela.simulator.admin.AlertServiceAdminClient;
 import gt.umg.centinela.simulator.config.SimulatorProperties;
 import gt.umg.centinela.simulator.scenario.ExpectedAlert;
 import gt.umg.centinela.simulator.scenario.ScenarioCatalog;
@@ -42,13 +43,15 @@ public class ValidationService {
     private final ScenarioCatalog catalog;
     private final ScenarioRunner runner;
     private final RestClient alertApi;
-    private final RestClient adminApi;
+    private final AlertServiceAdminClient correlation;
     private final Map<UUID, ValidationReport> reports = new ConcurrentHashMap<>();
     private volatile UUID latest;
 
-    public ValidationService(ScenarioCatalog catalog, ScenarioRunner runner, SimulatorProperties properties) {
+    public ValidationService(ScenarioCatalog catalog, ScenarioRunner runner, AlertServiceAdminClient correlation,
+                             SimulatorProperties properties) {
         this.catalog = catalog;
         this.runner = runner;
+        this.correlation = correlation;
         // Con timeouts: si el nodo B no responde, la validacion falla con un motivo claro en vez de colgarse
         HttpClient http = HttpClient.newBuilder().connectTimeout(properties.getHttpTimeout()).build();
         JdkClientHttpRequestFactory requests = new JdkClientHttpRequestFactory(http);
@@ -58,12 +61,6 @@ public class ValidationService {
                 .baseUrl(properties.getAlertServiceUrl())
                 .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceUser(), properties.getAlertServicePassword()))
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
-                .build();
-        this.adminApi = RestClient.builder()
-                .requestFactory(requests)
-                .baseUrl(properties.getAlertServiceUrl())
-                .defaultHeaders(h -> h.setBasicAuth(properties.getAlertServiceAdminUser(),
-                        properties.getAlertServiceAdminPassword()))
                 .build();
     }
 
@@ -105,8 +102,7 @@ public class ValidationService {
 
     private String resetCorrelationState() {
         try {
-            JsonNode result = adminApi.post().uri("/api/admin/correlation/reset").retrieve().body(JsonNode.class);
-            String summary = "ok (" + (result == null ? 0 : result.path("deletedKeys").asLong()) + " llaves eliminadas)";
+            String summary = "ok (" + correlation.resetAll() + " llaves eliminadas)";
             log.info("Estado de correlacion reiniciado antes de validar: {}", summary);
             sleep(1500); // margen para que terminen de procesarse eventos en vuelo
             return summary;

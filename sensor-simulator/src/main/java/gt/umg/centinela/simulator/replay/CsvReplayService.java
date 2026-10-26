@@ -19,13 +19,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.NoSuchElementException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
 
 /**
  * Reproduce eventos desde un CSV predefinido ("CSV predefinidos + Randomizer" del enunciado).
@@ -38,6 +38,7 @@ import java.util.concurrent.ThreadLocalRandom;
 public class CsvReplayService {
 
     private static final Logger log = LoggerFactory.getLogger(CsvReplayService.class);
+    private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,80}\\.csv");
 
     private final EventFactory factory;
     private final EventPublisher publisher;
@@ -56,7 +57,7 @@ public class CsvReplayService {
     public record ReplaySummary(String source, int events, double durationSeconds, Instant startedAt) {
     }
 
-    /** @param resource nombre de un CSV incluido en el jar (carpeta replay/) o ruta absoluta en disco */
+    /** @param resource nombre de un CSV incluido en el jar (carpeta replay/ de los recursos del simulador) */
     public ReplaySummary replay(String resource, double speed, boolean jitter) throws IOException {
         List<ReplayRow> rows = parse(open(resource));
         double factor = speed <= 0 ? 1.0 : speed;
@@ -74,12 +75,17 @@ public class CsvReplayService {
         return new ReplaySummary(resource, rows.size(), maxOffset, start);
     }
 
-    private InputStream open(String resource) throws IOException {
-        Path path = Path.of(resource);
-        if (path.isAbsolute() && Files.exists(path)) {
-            return Files.newInputStream(path);
+    /** Solo CSV incluidos en el jar: un nombre con rutas permitiria leer otros archivos del contenedor. */
+    static InputStream open(String resource) throws IOException {
+        if (resource == null || !SAFE_NAME.matcher(resource).matches() || resource.contains("..")) {
+            throw new IllegalArgumentException("Nombre de CSV invalido: use un archivo de la carpeta replay/ "
+                    + "del simulador, p. ej. noche-de-viernes.csv");
         }
-        return new ClassPathResource("replay/" + resource).getInputStream();
+        ClassPathResource csv = new ClassPathResource("replay/" + resource);
+        if (!csv.exists()) {
+            throw new NoSuchElementException("No existe el CSV de replay " + resource);
+        }
+        return csv.getInputStream();
     }
 
     static List<ReplayRow> parse(InputStream input) throws IOException {

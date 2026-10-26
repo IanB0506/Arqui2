@@ -19,7 +19,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * configuradas. Cada 100 ms acumula "tasa x tiempo" y emite la parte entera, de modo que se
  * respetan tasas fraccionarias (p. ej. 0.001 eventos/s).
  *
- * <p>El multiplicador permite simular picos de carga (concierto, partido, manifestacion).
+ * <p>El multiplicador permite simular picos de carga (concierto, partido, manifestacion). En las zonas
+ * donde corre un escenario ({@link QuietZones}) solo se emiten lecturas normales.
  */
 @Component
 public class BaselineGenerator {
@@ -30,16 +31,19 @@ public class BaselineGenerator {
     private final SimulatorProperties properties;
     private final EventFactory factory;
     private final EventPublisher publisher;
+    private final QuietZones quietZones;
     private final Map<SensorType, Double> accumulators = new EnumMap<>(SensorType.class);
 
     private volatile boolean enabled;
     private volatile double multiplier = 1.0;
     private volatile Instant burstUntil = Instant.EPOCH;
 
-    public BaselineGenerator(SimulatorProperties properties, EventFactory factory, EventPublisher publisher) {
+    public BaselineGenerator(SimulatorProperties properties, EventFactory factory, EventPublisher publisher,
+                             QuietZones quietZones) {
         this.properties = properties;
         this.factory = factory;
         this.publisher = publisher;
+        this.quietZones = quietZones;
         this.enabled = properties.isBaselineEnabled();
         for (SensorType type : SensorType.values()) {
             accumulators.put(type, ThreadLocalRandom.current().nextDouble());
@@ -60,7 +64,10 @@ public class BaselineGenerator {
             accumulators.put(type, acc - toEmit);
             for (int i = 0; i < toEmit; i++) {
                 int zone = zones.get(ThreadLocalRandom.current().nextInt(zones.size()));
-                publisher.publish(randomEvent(type, zone));
+                SimulatedEvent event = quietZones.isQuiet(zone) ? quietEvent(type, zone) : randomEvent(type, zone);
+                if (event != null) {
+                    publisher.publish(event);
+                }
             }
         }
     }
@@ -72,6 +79,16 @@ public class BaselineGenerator {
             case SPEED -> factory.randomSpeed(zone);
             case ACOUSTIC -> factory.randomAcoustic(zone);
             case CITIZEN_REPORT -> factory.randomCitizen(zone);
+        };
+    }
+
+    /** En una zona con un escenario en curso solo hay lecturas normales (null = no se emite nada). */
+    private SimulatedEvent quietEvent(SensorType type, int zone) {
+        return switch (type) {
+            case PANIC, CITIZEN_REPORT -> null;
+            case LPR -> factory.normalLpr(zone);
+            case SPEED -> factory.normalSpeed(zone);
+            case ACOUSTIC -> factory.ambientAcoustic(zone);
         };
     }
 

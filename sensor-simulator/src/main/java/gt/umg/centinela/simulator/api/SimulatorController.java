@@ -1,7 +1,9 @@
 package gt.umg.centinela.simulator.api;
 
+import gt.umg.centinela.common.geo.ZoneCatalog;
 import gt.umg.centinela.simulator.config.SimulatorProperties;
 import gt.umg.centinela.simulator.generator.BaselineGenerator;
+import gt.umg.centinela.simulator.generator.QuietZones;
 import gt.umg.centinela.simulator.publish.SpoolService;
 import gt.umg.centinela.simulator.watchdog.NodeWatchdog;
 import gt.umg.centinela.simulator.replay.CsvReplayService;
@@ -21,8 +23,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
@@ -33,6 +37,7 @@ import java.util.UUID;
  *   GET  /api/simulator/status
  *   POST /api/simulator/baseline?enabled=false
  *   POST /api/simulator/burst?multiplier=20&amp;seconds=60
+ *   POST /api/simulator/quiet?zones=4,10&amp;seconds=400   (aisla zonas del ruido de fondo: escenario en otro simulador)
  *   GET  /api/scenarios
  *   POST /api/scenarios/robo-en-curso?zone=4
  *   POST /api/replay?resource=noche-de-viernes.csv&amp;speed=2
@@ -51,10 +56,11 @@ public class SimulatorController {
     private final CsvReplayService replay;
     private final ValidationService validation;
     private final NodeWatchdog watchdog;
+    private final QuietZones quietZones;
 
     public SimulatorController(SimulatorProperties properties, BaselineGenerator baseline, SpoolService spool,
                                ScenarioCatalog catalog, ScenarioRunner runner, CsvReplayService replay,
-                               ValidationService validation, NodeWatchdog watchdog) {
+                               ValidationService validation, NodeWatchdog watchdog, QuietZones quietZones) {
         this.properties = properties;
         this.baseline = baseline;
         this.spool = spool;
@@ -63,6 +69,7 @@ public class SimulatorController {
         this.replay = replay;
         this.validation = validation;
         this.watchdog = watchdog;
+        this.quietZones = quietZones;
     }
 
     @GetMapping("/simulator/status")
@@ -78,6 +85,7 @@ public class SimulatorController {
         status.put("spoolPending", spool.pendingCount());
         status.put("spoolTelemetryPending", spool.telemetryPending());
         status.put("nodeB", watchdog.snapshot().nodeB().state());
+        status.put("quietZones", quietZones.active());
         return status;
     }
 
@@ -91,6 +99,16 @@ public class SimulatorController {
     public Map<String, Object> burst(@RequestParam(defaultValue = "20") double multiplier,
                                      @RequestParam(defaultValue = "60") int seconds) {
         baseline.startBurst(multiplier, seconds);
+        return status();
+    }
+
+    /** Un escenario lanzado en otro simulador pide que este tampoco meta ruido en sus zonas. */
+    @PostMapping("/simulator/quiet")
+    public Map<String, Object> quiet(@RequestParam List<Integer> zones, @RequestParam(defaultValue = "400") int seconds) {
+        if (seconds < 1 || seconds > 3600 || zones.stream().anyMatch(z -> z < 1 || z > ZoneCatalog.all().size())) {
+            throw new IllegalArgumentException("Zonas de 1 a " + ZoneCatalog.all().size() + " y de 1 a 3600 segundos");
+        }
+        quietZones.reserve(zones, Instant.now().plusSeconds(seconds));
         return status();
     }
 

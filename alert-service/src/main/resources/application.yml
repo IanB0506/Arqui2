@@ -37,6 +37,7 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}
+        partitioner.class: gt.umg.centinela.common.kafka.ZonePartitioner   # el reproceso de la DLQ respeta la particion de cada zona
   lifecycle:
     timeout-per-shutdown-phase: 15s
   data:

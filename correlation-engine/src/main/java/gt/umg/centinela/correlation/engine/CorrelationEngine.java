@@ -54,6 +54,11 @@ public class CorrelationEngine {
     private final Supplier<Map<String, Double>> adjustments;
     private final Clock clock;
     private volatile long lastBacklogMark;
+    private volatile long localHoldUntil;
+    /** Particiones cuyo ultimo evento fallo (p. ej. Redis no responde) y cuando: sus eventos esperan en Kafka. */
+    private final Map<String, Long> failingPartitions = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Una particion que falla se reintenta al menos cada 30 s; si pasa mas que esto sin reintento, ya no cuenta. */
+    private static final long FAILING_WINDOW_MS = 60_000;
 
     public CorrelationEngine(CorrelationProperties properties, WindowStore windows, CorrelationState state,
                              Supplier<Map<String, Double>> adjustments, Clock clock) {
@@ -63,6 +68,8 @@ public class CorrelationEngine {
         this.state = state;
         this.adjustments = adjustments;
         this.clock = clock;
+        // Al arrancar puede haber atraso en Kafka que el consumidor aun no recibe: se espera antes de clasificar
+        this.localHoldUntil = clock.millis() + properties.getCatchUpHold().toMillis();
     }
 
     public List<RuleDefinition> rules() {
@@ -81,7 +88,9 @@ public class CorrelationEngine {
      * recuerda. Si la publicacion falla, la excepcion sube al consumidor, que reintenta el evento.
      */
     public void onEvent(NormalizedEvent event, AlertSink sink) {
-        noteDelay(event);
+        if (event.replayedFromSpool()) {
+            markCatchUp(); // se estan reenviando eventos guardados durante una caida
+        }
         if (event.sensorType() == SensorType.PANIC) {
             checkDeviceAbuse(event, sink);
         }
@@ -104,17 +113,61 @@ public class CorrelationEngine {
     }
 
     /**
-     * Si el motor esta procesando eventos que esperaron en Kafka (puesta al dia tras una caida), lo
-     * avisa a todas las instancias: mientras tanto no se clasifica nada como falso positivo, porque la
-     * evidencia que corrobora un ancla puede venir detras en la cola.
+     * Puesta al dia tras una caida: mientras alguna instancia procesa atraso, ninguna clasifica falsos
+     * positivos, porque la evidencia que corrobora un ancla puede venir detras en la cola. El atraso se
+     * detecta sin comparar relojes de maquinas distintas (un desfase entre nodos lo daba por permanente):
+     * por la cola que Kafka reporta para la particion, porque llegan eventos reenviados desde un spool o
+     * porque una particion se recupera de una falla de procesamiento.
+     *
+     * @param lag mensajes de la particion que el consumidor aun no recibe
      */
-    private void noteDelay(NormalizedEvent event) {
-        if (event.ingestedAt() == null) {
-            return;
+    public void noteConsumerLag(long lag) {
+        if (lag > properties.getCatchUpLag()) {
+            markCatchUp();
         }
-        Duration delay = Duration.between(event.ingestedAt(), clock.instant());
+    }
+
+    /**
+     * Kafka asigno particiones a esta instancia (arranque o rebalanceo): las que llegan de una instancia
+     * caida pueden traer atraso, asi que esta instancia espera antes de clasificar falsos positivos.
+     */
+    public void notePartitionsAssigned() {
+        holdLocally();
+    }
+
+    /**
+     * Fallo el procesamiento de un evento de la particion (p. ej. Redis no responde): mientras siga fallando, sus
+     * eventos, que pueden corroborar anclas pendientes, esperan en Kafka. No se clasifica hasta que se recupere.
+     */
+    public void noteProcessingFailure(String partition) {
+        failingPartitions.put(partition, clock.millis());
+    }
+
+    /** La particion volvio a procesar tras una falla: trae atraso, asi que todas las instancias esperan un poco mas. */
+    public void noteProcessingOk(String partition) {
+        if (!failingPartitions.isEmpty() && failingPartitions.remove(partition) != null) {
+            holdLocally();
+            try {
+                markCatchUp();
+            } catch (RuntimeException e) {
+                log.debug("No se pudo avisar la puesta al dia a las demas instancias: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void holdLocally() {
+        localHoldUntil = Math.max(localHoldUntil, clock.millis() + properties.getCatchUpHold().toMillis());
+    }
+
+    private boolean consumersFailing() {
         long now = clock.millis();
-        if (delay.compareTo(properties.getCatchUpThreshold()) > 0 && now - lastBacklogMark > 2_000) {
+        failingPartitions.values().removeIf(at -> now - at > FAILING_WINDOW_MS);
+        return !failingPartitions.isEmpty();
+    }
+
+    private void markCatchUp() {
+        long now = clock.millis();
+        if (now - lastBacklogMark > 2_000) {
             lastBacklogMark = now;
             state.markBacklog(properties.getCatchUpHold());
         }
@@ -275,12 +328,13 @@ public class CorrelationEngine {
     }
 
     /**
-     * Version que publica en {@code sink}. Mientras alguna instancia procesa atraso, no clasifica nada.
+     * Version que publica en {@code sink}. Mientras alguna instancia procesa atraso, o esta acaba de arrancar,
+     * de recibir particiones o tiene particiones que no logran procesar, no clasifica nada.
      * Si una publicacion falla, el ancla (y las que faltaban) vuelven a la cola de pendientes: el
      * reclamo nunca descarta un ancla sin haber publicado su resultado.
      */
     public void sweepPending(AlertSink sink) {
-        if (state.isBacklogged()) {
+        if (clock.millis() < localHoldUntil || consumersFailing() || state.isBacklogged()) {
             log.debug("Puesta al dia en curso: se pospone la clasificacion de falsos positivos");
             return;
         }
@@ -344,10 +398,13 @@ public class CorrelationEngine {
         if (count <= config.getMaxPanics() || state.isDeviceFlagged(panic.sensorId())) {
             return;
         }
+        // El id de un celular es un seudonimo: queda en la evidencia (consola), no en la descripcion, que tambien
+        // lee Grafana. Un poste fisico si se nombra: hay que ir a revisarlo.
+        String device = panic.sensorId().startsWith("APP-") ? "Un dispositivo de la app" : "El boton " + panic.sensorId();
         String description = String.format(Locale.ROOT,
-                "El dispositivo %s presiono el boton de panico %d veces en %d min. Sus eventos se ignoraran "
+                "%s presiono el boton de panico %d veces en %d min. Sus eventos se ignoraran "
                         + "durante %d min para evitar falsas alarmas; revisar si es vandalismo, falla o abuso.",
-                panic.sensorId(), count, config.getWindow().toMinutes(), config.getFlagDuration().toMinutes());
+                device, count, config.getWindow().toMinutes(), config.getFlagDuration().toMinutes());
         log.info("DISPOSITIVO SOSPECHOSO {} en {}", panic.sensorId(), panic.zoneName());
         sink.publish(new AlertEvent(deterministicId("abuse:" + panic.eventId()), 1, "R0-ABUSO-DISPOSITIVO", SUSPICIOUS_DEVICE, Severity.MEDIUM,
                 AlertStatus.NEW, panic.zoneId(), panic.zoneName(), panic.latitude(), panic.longitude(), 1.0,

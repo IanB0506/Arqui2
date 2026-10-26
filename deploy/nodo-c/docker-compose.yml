@@ -73,6 +73,11 @@ services:
     build: { <<: *java-build, args: { MODULE: correlation-engine } }
     image: centinela/correlation-engine:1.0.0
     ports: ["${WORKER_CORRELATION_PORT:-8082}:8082"]
+    environment:
+      <<: *java-env
+      SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/config/   # las mismas reglas que el nodo B (infra/correlation)
+    volumes:
+      - ../../infra/correlation:/config:ro
 
 volumes:
   simulator-spool:

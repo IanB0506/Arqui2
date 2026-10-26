@@ -60,7 +60,7 @@ class WatchdogLogicTest {
                 exchange.getResponseBody().write(body);
             } else {
                 try {
-                    Thread.sleep(1_500); // la base no responde y el chequeo espera la conexion
+                    Thread.sleep(6_000); // la base no responde y el chequeo espera la conexion
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -72,7 +72,9 @@ class WatchdogLogicTest {
         server.start();
         try {
             String base = "http://127.0.0.1:" + server.getAddress().getPort();
-            Observation o = new HttpProbe(Duration.ofMillis(400)).probe(base + "/actuator/health");
+            // margen holgado para la consulta de liveness: con la CPU saturada (12 contenedores arrancando)
+            // un timeout de 400 ms llego a vencer tambien ahi y la prueba fallaba sin que la logica cambiara
+            Observation o = new HttpProbe(Duration.ofMillis(1_500)).probe(base + "/actuator/health");
             assertThat(o.state()).isEqualTo(HealthState.DEGRADED);
             assertThat(o.detail()).contains("vivo");
         } finally {

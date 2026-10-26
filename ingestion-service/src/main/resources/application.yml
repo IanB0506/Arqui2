@@ -28,6 +28,7 @@ spring:
       compression-type: lz4
       properties:
         enable.idempotence: true
+        partitioner.class: gt.umg.centinela.common.kafka.ZonePartitioner   # zona N -> particion N-1: las 12 se usan
         delivery.timeout.ms: 15000
         request.timeout.ms: 5000
         max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}   # sin broker, send() no cuelga 60 s al gateway

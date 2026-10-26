@@ -29,6 +29,7 @@ spring:
       acks: all
       properties:
         enable.idempotence: true
+        partitioner.class: gt.umg.centinela.common.kafka.ZonePartitioner   # zona N -> particion N-1: las 12 se usan
         max.block.ms: ${KAFKA_MAX_BLOCK_MS:3000}
   lifecycle:
     timeout-per-shutdown-phase: 15s
@@ -59,8 +60,9 @@ correlation:
   false-positive-timeout: ${CORRELATION_FP_TIMEOUT:90s}
   incident-cooldown: 10m
   suspect-tracking: 30m
-  catch-up-threshold: 10s    # evento con mas atraso = puesta al dia tras una caida...
-  catch-up-hold: 20s         # ...mientras tanto no se clasifican falsos positivos
+  catch-up-lag: 50           # particion con mas mensajes en espera (o eventos reenviados de un spool) = puesta al dia...
+  catch-up-hold: 40s         # ...mientras tanto, al arrancar o rebalancear y tras una falla, no se clasifican falsos
+                             # positivos (40 s > 30 s, la espera maxima entre reintentos de un evento que fallo)
   device-abuse:
     max-panics: 5            # mas de 5 panicos del mismo dispositivo...
     window: 10m              # ...en 10 minutos lo marca como sospechoso

@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Garantias ante caidas (ADR-006): una alerta nunca se pierde porque Kafka fallo al publicarla, y no
- * se clasifica un falso positivo mientras el motor se pone al dia.
+ * se clasifica un falso positivo mientras el motor se pone al dia (sin depender de los relojes de los nodos).
  */
 class EngineResilienceTest {
 
@@ -94,11 +94,80 @@ class EngineResilienceTest {
     void mientrasSeProcesaAtrasoNoSeClasificanFalsosPositivos() {
         engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-4", 0));
         clock.advance(Duration.ofSeconds(91));
-        // llega un evento que espero 60 s en Kafka: el motor esta poniendose al dia
-        engine.onEvent(event(SensorType.LPR, 3, "LECTURA_PLACA", 50.0, "LPR-Z03-01", 31));
+        // Kafka reporta 5000 mensajes en espera en la particion: el motor esta poniendose al dia
+        engine.noteConsumerLag(5_000);
         assertThat(state.isBacklogged()).isTrue();
         assertThat(engine.sweepPending()).isEmpty();
         state.backlogged = false; // vencio la marca de atraso
+        assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
+    }
+
+    @Test
+    void losEventosReenviadosDesdeUnSpoolPausanLaClasificacion() {
+        engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-5", 0));
+        clock.advance(Duration.ofSeconds(91));
+        // tras una caida de Kafka llega telemetria guardada en el spool del simulador
+        engine.onEvent(spooled(event(SensorType.SPEED, 3, "NORMAL", 40.0, "VEL-Z03-01", 30)));
+        assertThat(state.isBacklogged()).isTrue();
+        assertThat(engine.sweepPending()).isEmpty();
+    }
+
+    @Test
+    void unRelojDesfasadoEntreNodosNoDetieneLaClasificacion() {
+        engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-6", 0));
+        clock.advance(Duration.ofSeconds(91));
+        // la ingesta corre en otra PC con el reloj 60 s atrasado y la cola de Kafka esta al dia
+        engine.onEvent(event(SensorType.LPR, 3, "LECTURA_PLACA", 50.0, "LPR-Z03-01", 31));
+        engine.noteConsumerLag(3);
+        assertThat(state.isBacklogged()).isFalse();
+        assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
+    }
+
+    @Test
+    void trasRecibirParticionesSeEsperaAntesDeClasificar() {
+        engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-7", 0));
+        clock.advance(Duration.ofSeconds(91));
+        engine.notePartitionsAssigned(); // llegan las particiones de una instancia caida: puede haber atraso detras
+        assertThat(engine.sweepPending()).isEmpty();
+        clock.advance(Duration.ofSeconds(41));
+        assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
+    }
+
+    @Test
+    void mientrasUnaParticionNoLograProcesarNoSeClasificaYAlVolverSeEspera() {
+        engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-9", 0));
+        clock.advance(Duration.ofSeconds(91));
+        // Redis no responde: el consumidor reintenta (cada vez con mas espera, hasta 30 s)
+        engine.noteProcessingFailure("events.normalized-9");
+        assertThat(engine.sweepPending()).isEmpty();
+        clock.advance(Duration.ofSeconds(30));
+        engine.noteProcessingFailure("events.normalized-9");
+        clock.advance(Duration.ofSeconds(25));
+        assertThat(engine.sweepPending()).isEmpty();
+        // vuelve: procesa su atraso, que puede traer la corroboracion; se espera un poco mas
+        engine.noteProcessingOk("events.normalized-9");
+        assertThat(state.isBacklogged()).isTrue();
+        state.backlogged = false;
+        assertThat(engine.sweepPending()).isEmpty();
+        clock.advance(Duration.ofSeconds(41));
+        assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
+    }
+
+    @Test
+    void unaParticionQueDejoDeReintentarNoBloqueaParaSiempre() {
+        engine.onEvent(event(SensorType.PANIC, 10, "PANICO", null, "APP-10", 0));
+        clock.advance(Duration.ofSeconds(91));
+        engine.noteProcessingFailure("events.normalized-3"); // p. ej. Kafka se la asigno a otra instancia
+        clock.advance(Duration.ofSeconds(61));
+        assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
+    }
+
+    @Test
+    void alArrancarSeEsperaAntesDeClasificar() {
+        // un ancla que otra instancia dejo pendiente y vencio mientras esta arrancaba
+        state.addPending("R1-ROBO", event(SensorType.PANIC, 10, "PANICO", null, "APP-8", 0), T0);
+        assertThat(engine.sweepPending()).isEmpty();
+        clock.advance(Duration.ofSeconds(41));
         assertThat(engine.sweepPending()).extracting(AlertEvent::alertType).containsExactly("POSIBLE_FALSO_POSITIVO");
     }
 
@@ -112,6 +181,12 @@ class EngineResilienceTest {
         assertThat(state.isDeviceFlagged("BTN-Z02-01")).isFalse();
         assertThat(engine.onEvent(event(SensorType.PANIC, 2, "PANICO", null, "BTN-Z02-01", 7)))
                 .extracting(AlertEvent::alertType).contains("DISPOSITIVO_SOSPECHOSO");
+    }
+
+    private static NormalizedEvent spooled(NormalizedEvent e) {
+        return new NormalizedEvent(e.eventId(), e.sensorType(), e.sensorId(), e.zoneId(), e.zoneName(), e.latitude(),
+                e.longitude(), e.eventTime(), e.ingestedAt(), e.subtype(), e.value(), e.confidence(), e.anomalous(),
+                e.plateHash(), e.plateMasked(), e.sourceHash(), e.origin(), Map.of(NormalizedEvent.ATTR_SPOOLED, "true"));
     }
 
     private static NormalizedEvent event(SensorType type, int zone, String subtype, Double value, String sensorId,

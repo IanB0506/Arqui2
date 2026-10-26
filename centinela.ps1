@@ -33,6 +33,7 @@ param(
     [switch] $Quitar,
     [switch] $Si,
     [int] $Zona = 0,
+    [string] $Tipo,
     [string] $Velocidad = '1',
     [int] $Multiplicador = 20,
     [int] $Segundos = 60,
@@ -45,6 +46,10 @@ $ErrorActionPreference = 'Continue'   # con 'Stop', PowerShell 5.1 corta en cual
 $ProgressPreference = 'SilentlyContinue'
 # La salida de docker viene en UTF-8; sin esto PowerShell 5.1 la muestra con caracteres raros
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+# Todas las llamadas HTTP del script son a la red local: un proxy del sistema sin excepción para la LAN
+# (común en laboratorios) las haría fallar. PowerShell 5.1 usa WebRequest; PowerShell 7, HttpClient.
+try { [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy } catch { }
+try { [System.Net.Http.HttpClient]::DefaultProxy = New-Object System.Net.WebProxy } catch { }
 
 $Raiz = $PSScriptRoot
 $ArchivoEnv = Join-Path $Raiz '.env'
@@ -79,6 +84,9 @@ $PuertosPorDefecto = [ordered]@{
 
 # Memoria mínima recomendada para la VM de Docker Desktop, en GB
 $MemoriaPorRol = @{ UNICO = 6; A = 4.5; B = 3; C = 1.5; D = 1.5 }
+
+$ImagenesBase = @('apache/kafka:3.9.1', 'timescale/timescaledb:2.17.2-pg16', 'redis:7.4-alpine', 'grafana/grafana:11.4.0', 'prom/prometheus:v3.1.0')
+$ImagenesPropias = @('centinela/sensor-simulator:1.0.0', 'centinela/ingestion-service:1.0.0', 'centinela/correlation-engine:1.0.0', 'centinela/alert-service:1.0.0')
 
 # =============================================================================================
 # Salida por consola
@@ -271,11 +279,19 @@ function Test-DockerCorriendo {
     return ($LASTEXITCODE -eq 0 -and $v)
 }
 
+# Con Docker Desktop en modo de contenedores Windows, ninguna imagen del proyecto (Linux) puede correr
+function Assert-ContenedoresLinux {
+    $tipo = & $DockerExe info --format '{{.OSType}}' 2>$null
+    if ($tipo -eq 'windows') {
+        Stop-Centinela 'Docker Desktop está en modo de contenedores Windows: clic derecho en el ícono de Docker > "Switch to Linux containers" y repita.'
+    }
+}
+
 function Assert-Docker {
     if (-not $DockerExe -or -not (Get-Command $DockerExe -ErrorAction SilentlyContinue)) {
         Stop-Centinela 'No se encontró Docker. Instale Docker Desktop (https://www.docker.com/products/docker-desktop/) y vuelva a intentar (si lo acaba de instalar, abra una terminal nueva).'
     }
-    if (Test-DockerCorriendo) { return }
+    if (Test-DockerCorriendo) { Assert-ContenedoresLinux; return }
     Write-Aviso 'Docker Desktop no está corriendo; intento abrirlo...'
     & $DockerExe desktop start 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0 -and $EsWindows) {
@@ -284,16 +300,23 @@ function Assert-Docker {
         }
     }
     for ($i = 0; $i -lt 60; $i++) {
-        if (Test-DockerCorriendo) { Write-Ok 'Docker Desktop listo'; return }
+        if (Test-DockerCorriendo) { Write-Ok 'Docker Desktop listo'; Assert-ContenedoresLinux; return }
         Start-Sleep -Seconds 3
     }
     Stop-Centinela 'Docker Desktop no respondió en 3 minutos. Ábralo a mano, espere a que diga "Engine running" y repita.'
 }
 
-# Diferencia en segundos entre el reloj de Windows y el de la VM de Docker (se atrasa tras suspender la PC)
+# Diferencia en segundos entre el reloj de Windows y el de la VM de Docker (se atrasa tras suspender la PC).
+# Usa una imagen que ya esté en esta PC: una descarga dentro de la medición daría un falso desfase.
 function Get-DesfaseVm {
+    $imagen = $null
+    foreach ($i in @('redis:7.4-alpine') + $ImagenesPropias + @('apache/kafka:3.9.1', 'timescale/timescaledb:2.17.2-pg16')) {
+        $id = & $DockerExe images -q $i 2>$null
+        if ($LASTEXITCODE -eq 0 -and $id) { $imagen = $i; break }
+    }
+    if (-not $imagen) { return $null }
     $antes = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $vm = & $DockerExe run --rm --entrypoint date redis:7.4-alpine +%s 2>$null
+    $vm = & $DockerExe run --rm --entrypoint date $imagen +%s 2>$null
     $despues = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     if ($LASTEXITCODE -ne 0 -or -not ($vm -match '^\d+$')) { return $null }
     return [math]::Round([double]$vm - (($antes + $despues) / 2000.0), 1)
@@ -351,10 +374,23 @@ function Get-ComposeServicios([string]$Rol, $Cfg) {
     return @($salida | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
 }
 
+# Contenedor que publica el puerto y su proyecto de docker compose (centinela, centinela-nodo-a, ...)
 function Get-ContenedorConPuerto([int]$Puerto) {
-    $nombres = & $DockerExe ps --filter "publish=$Puerto" --format '{{.Names}}' 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return ($nombres | Select-Object -First 1)
+    $lineas = & $DockerExe ps --filter "publish=$Puerto" --format '{{.Names}}|{{.Label "com.docker.compose.project"}}' 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $lineas) { return $null }
+    $partes = ([string]($lineas | Select-Object -First 1)).Split('|')
+    return @{ Nombre = $partes[0]; Proyecto = $(if ($partes.Count -gt 1) { $partes[1] } else { '' }) }
+}
+
+# Rol de un proyecto de docker compose de Centinela (para detener otro modo que siga encendido)
+function Get-RolDeProyecto([string]$Proyecto) {
+    switch ($Proyecto) {
+        'centinela' { return 'UNICO' }
+        'centinela-nodo-a' { return 'A' }
+        'centinela-nodo-b' { return 'B' }
+        'centinela-nodo-c' { return 'C' }
+        default { return $null }
+    }
 }
 
 # =============================================================================================
@@ -374,6 +410,8 @@ function Get-IpLan {
             $ip = ($c.IPv4Address | Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress
             if ($ip) { return $ip }
         }
+    } catch { }
+    try {
         # Laboratorio sin router: tomar el adaptador físico conectado
         $fisicos = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' })
         foreach ($f in $fisicos) {
@@ -388,6 +426,15 @@ function Get-IpLan {
 function Get-IpsLocales {
     if (-not $EsWindows) { return @((& hostname -I 2>$null) -split ' ' | Where-Object { $_ }) + @('127.0.0.1') }
     try { return @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | ForEach-Object { $_.IPAddress }) } catch { return @('127.0.0.1') }
+}
+
+# IP de esta PC para el .env: si ya figura una de sus IP en el .env (otra PC lo armó), esa; si no, la detectada.
+# Con Wi-Fi y cable a la vez, la detección sola podría elegir la red equivocada.
+function Get-IpParaEnv($Cfg, [string[]]$Locales) {
+    foreach ($ip in @($Cfg['NODE_A_IP'], $Cfg['NODE_B_IP']) + (Get-Generadores $Cfg)) {
+        if ($ip -and $ip -notlike '127.*' -and $Locales -contains $ip) { return $ip }
+    }
+    return Get-IpLan
 }
 
 function Test-IpValida([string]$Ip) {
@@ -452,6 +499,27 @@ function Get-Urls($Cfg) {
     }
 }
 
+# Simuladores de todos los generadores (C y D). En una sola PC, el local.
+function Get-Simuladores($Cfg) {
+    $roles = Get-RolesLocales
+    if ($roles -contains 'UNICO') { return @(@{ Nodo = 'C'; Url = 'http://localhost:{0}' -f $Cfg['SIMULATOR_PORT'] }) }
+    $lista = @()
+    $gens = Get-Generadores $Cfg
+    for ($i = 0; $i -lt [math]::Min(2, $gens.Count); $i++) {
+        $letra = if ($i -eq 0) { 'C' } else { 'D' }
+        $ip = if ($roles -contains $letra) { 'localhost' } else { $gens[$i] }
+        $lista += @{ Nodo = $letra; Url = 'http://{0}:{1}' -f $ip, $Cfg['SIMULATOR_PORT'] }
+    }
+    return $lista
+}
+
+# Simuladores sobre los que actúa un comando de demo: el de -Nodo C|D, o todos
+function Get-SimuladoresObjetivo($Cfg) {
+    $todos = @(Get-Simuladores $Cfg)
+    if ($Nodo -match '^\s*[CcDd]\s*$') { return @($todos | Where-Object { $_.Nodo -eq $Nodo.Trim().ToUpper() }) }
+    return $todos
+}
+
 # =============================================================================================
 # Puertos: rangos reservados por Windows (Hyper-V/WSL/WinNAT), ocupados, duplicados
 # =============================================================================================
@@ -495,11 +563,15 @@ function Get-DuenoPuerto([int]$Puerto) {
     return $null
 }
 
-function Test-Puerto([int]$Puerto, $Rangos) {
+function Test-Puerto([int]$Puerto, $Rangos, [string[]]$Proyectos = @()) {
     $contenedor = Get-ContenedorConPuerto $Puerto
     if ($contenedor) {
-        if ($contenedor -like 'centinela*') { return @{ Estado = 'centinela'; Detalle = "lo usa $contenedor (ya está levantado)" } }
-        return @{ Estado = 'ocupado'; Detalle = "lo usa el contenedor $contenedor" }
+        $nombre = $contenedor.Nombre
+        if ($contenedor.Proyecto -and $Proyectos -contains $contenedor.Proyecto) { return @{ Estado = 'centinela'; Detalle = "lo usa $nombre (ya está levantado)" } }
+        if (Get-RolDeProyecto $contenedor.Proyecto) {
+            return @{ Estado = 'otro-modo'; Proyecto = $contenedor.Proyecto; Detalle = "lo usa $nombre, de otro modo de Centinela que sigue encendido en esta PC" }
+        }
+        return @{ Estado = 'ocupado'; Detalle = "lo usa el contenedor $nombre" }
     }
     foreach ($r in $Rangos) {
         if (-not $r.Administrado -and $Puerto -ge $r.Inicio -and $Puerto -le $r.Fin) {
@@ -520,6 +592,7 @@ function Test-Puerto([int]$Puerto, $Rangos) {
 
 function Get-RevisionPuertos([string[]]$Roles, $Cfg) {
     $rangos = Get-RangosExcluidos
+    $proyectos = @($Roles | ForEach-Object { (Get-InfoRol $_ $Cfg).Proyecto })
     $vars = @()
     foreach ($r in $Roles) { foreach ($v in (Get-VariablesPuerto $r $Cfg)) { if ($vars -notcontains $v) { $vars += $v } } }
     $vistos = @{}
@@ -531,8 +604,8 @@ function Get-RevisionPuertos([string[]]$Roles, $Cfg) {
             continue
         }
         $vistos[$p] = $v
-        $t = Test-Puerto $p $rangos
-        $resultado += [pscustomobject]@{ Variable = $v; Puerto = $p; Estado = $t.Estado; Detalle = $t.Detalle }
+        $t = Test-Puerto $p $rangos $proyectos
+        $resultado += [pscustomobject]@{ Variable = $v; Puerto = $p; Estado = $t.Estado; Detalle = $t.Detalle; Proyecto = $t.Proyecto }
     }
     return $resultado
 }
@@ -565,6 +638,15 @@ function Show-RevisionPuertos($Revision) {
 function Repair-Puertos([string[]]$Roles, $Cfg, [bool]$Corregir) {
     $revision = @(Get-RevisionPuertos $Roles $Cfg)
     Show-RevisionPuertos $revision
+    # Otro modo de Centinela encendido (p. ej. se pasó de una PC a varias): se detiene, no se cambian puertos
+    $otros = @($revision | Where-Object { $_.Estado -eq 'otro-modo' } | ForEach-Object { $_.Proyecto } | Select-Object -Unique)
+    if ($otros.Count -gt 0) {
+        Write-Aviso "Sigue encendido otro modo de Centinela en esta PC ($($otros -join ', ')) y usa los mismos puertos."
+        if (-not (Read-SiNo '¿Detenerlo ahora? (sus datos se conservan)' $true)) { return $false }
+        foreach ($p in $otros) { $null = Invoke-Compose (Get-RolDeProyecto $p) $Cfg @('down') }
+        $revision = @(Get-RevisionPuertos $Roles $Cfg)
+        Show-RevisionPuertos $revision
+    }
     $malos = @($revision | Where-Object { $_.Estado -notin @('libre', 'centinela') })
     if ($malos.Count -eq 0) { return $true }
     if (-not $Corregir) {
@@ -652,7 +734,9 @@ function Invoke-ComandoFirewall {
         Write-Info 'Se abrirá una ventana de administrador (Windows pedirá confirmación).'
         $args2 = @('firewall')
         if ($Quitar) { $args2 += '-Quitar' }
+        if ($Nodo) { $args2 += @('-Nodo', $Nodo) }
         if (Invoke-Elevado $args2) { Write-Ok 'Firewall configurado.' }
+        else { Write-Fallo 'El firewall no quedó configurado (vea el mensaje de la ventana de administrador).' }
         return
     }
     Write-Titulo 'Firewall de Windows'
@@ -668,9 +752,18 @@ function Invoke-ComandoFirewall {
         Write-Ok "Se quitaron $($bloqueos.Count) reglas que bloqueaban a Docker Desktop."
     }
     $puertos = Get-PuertosFirewall $roles $cfg
-    New-NetFirewallRule -DisplayName ("Centinela Urbano - {0} (TCP {1})" -f ($roles -join ','), ($puertos -join ',')) -Group $GrupoFirewall `
-        -Direction Inbound -Action Allow -Protocol TCP -LocalPort $puertos -Profile Any -RemoteAddress LocalSubnet | Out-Null
-    Write-Ok "Entrada permitida desde la red local a los puertos TCP $($puertos -join ', ')."
+    # La subred local y, en varias PCs, las IP de los nodos: una PC por Wi-Fi o en otra sala queda en otra subred
+    $remotos = @('LocalSubnet')
+    if ($roles -notcontains 'UNICO') {
+        $remotos += @(@($cfg['NODE_A_IP'], $cfg['NODE_B_IP']) + (Get-Generadores $cfg) | Where-Object { $_ -and (Test-IpValida $_) } | Select-Object -Unique)
+    }
+    try {
+        New-NetFirewallRule -DisplayName ("Centinela Urbano - {0} (TCP {1})" -f ($roles -join ','), ($puertos -join ',')) -Group $GrupoFirewall `
+            -Direction Inbound -Action Allow -Protocol TCP -LocalPort $puertos -Profile Any -RemoteAddress $remotos -ErrorAction Stop | Out-Null
+    } catch {
+        Stop-Centinela "Windows no aceptó la regla del firewall: $($_.Exception.Message)"
+    }
+    Write-Ok "Entrada permitida a los puertos TCP $($puertos -join ', ') desde: $($remotos -join ', ')."
     Write-Info "Para quitarlo: centinela.cmd firewall -Quitar"
 }
 
@@ -702,10 +795,14 @@ function Show-Ayuda {
 
   DEMO
     escenarios           Lista los 10 escenarios.
-    escenario <id> [-Zona 4] [-Velocidad 1]   Lanza uno (p. ej. escenario tabla-2-4). -Nodo D usa el simulador de D.
+    escenario <id> [-Zona 4] [-Velocidad 1]   Lanza uno (p. ej. escenario tabla-2-4), aislado del ruido de fondo.
+                         -Nodo D usa el simulador de D.
     validar              Validación automática de las 9 correlaciones esperadas (~2,5 min).
-    pico [-Multiplicador 20] [-Segundos 60]   Pico de carga.
-    fondo on|off         Enciende o apaga el tráfico de fondo del simulador.
+    reporte "texto" [-Zona 4] [-Tipo ROBO]    Reporte ciudadano con texto libre, por la puerta HTTP de la app.
+                         Tipos: ROBO, ACCIDENTE, INCENDIO, ALTERCADO, PERSONA_SOSPECHOSA, OTRO.
+    panico [-Zona 10] [-Tipo PANICO]          Botón de pánico desde la app (PANICO, ROBO, ASALTO, EMERGENCIA_MEDICA...).
+    pico [-Multiplicador 20] [-Segundos 60]   Pico de carga en todos los generadores (-Nodo C|D: solo uno).
+    fondo on|off         Enciende o apaga el tráfico de fondo de los generadores (-Nodo C|D: solo uno).
     replay [archivo.csv] [-Velocidad 2]       Reproduce un CSV con aleatorización.
     caida <A|B|C>        Simula la caída de un nodo (apaga sus contenedores en ESTA PC).
     recuperar <A|B|C>    Vuelve a encender ese nodo.
@@ -731,7 +828,10 @@ function Invoke-Configurar {
     Write-Titulo 'Configuración de Centinela Urbano'
     $existe = Test-Path -LiteralPath $ArchivoEnv
     $cfg = Get-Config
-    $ipLocal = Get-IpLan
+    $previo = Read-Env $ArchivoEnv          # lo que ya decía el .env (para avisar si cambia algo compartido)
+    $rolesPrevios = @(Get-RolesLocales)
+    $ipsLocales = @(Get-IpsLocales | Where-Object { $_ -notlike '127.*' -and $_ -notlike '169.254.*' })
+    $ipLocal = Get-IpParaEnv $cfg $ipsLocales
 
     # 1. Modo y nodos de esta PC
     $roles = @()
@@ -767,6 +867,13 @@ function Invoke-Configurar {
             if (-not (Read-SiNo '¿Es esta la PRIMERA PC que configura?' $true)) {
                 Stop-Centinela "Copie el .env de la primera PC a $ArchivoEnv y vuelva a ejecutar 'centinela.cmd configurar'."
             }
+        } elseif ($rolesPrevios -contains 'UNICO' -or $cfg['NODE_A_IP'] -eq '192.168.1.10') {
+            # Una PC que se probó en modo de una sola PC tiene SU propio .env (su propia llave de seudonimización):
+            # con otra llave, sus workers no reconocerían las placas que seudonimiza el resto
+            Write-Aviso 'Este .env se creó en esta PC (modo de una sola PC). En varias PCs todas deben usar el .env de la primera PC.'
+            if (-not (Read-SiNo '¿Este .env ya es el de la primera PC (o esta es la primera PC)?' $true)) {
+                Stop-Centinela "Copie el .env de la primera PC a $ArchivoEnv y vuelva a ejecutar 'centinela.cmd configurar'."
+            }
         }
         if ($ipLocal) { Write-Ok "IP de esta PC: $ipLocal" } else { Write-Aviso 'No pude detectar la IP de esta PC (ejecute ipconfig).' }
         $defA = if ($IpA) { $IpA } elseif ($roles -contains 'A' -and $ipLocal) { $ipLocal } else { $cfg['NODE_A_IP'] }
@@ -792,6 +899,19 @@ function Invoke-Configurar {
             if (-not (Test-IpValida $ip)) { Stop-Centinela "IP inválida: $ip" }
             if ($ip -like '127.*' -or $ip -like '169.254.*') { Stop-Centinela "La IP $ip no sirve entre PCs: use la IP de la red local (ipconfig)." }
         }
+        # El nodo que corre aquí debe anunciarse con una IP de esta PC (las demás se conectan a ella)
+        $propias = @()
+        if ($roles -contains 'A') { $propias += ,@('A', $a) }
+        if ($roles -contains 'B') { $propias += ,@('B', $b) }
+        $listaGen = @($g -split '[,; ]+' | Where-Object { $_ })
+        if ($roles -contains 'C' -and $listaGen.Count -ge 1) { $propias += ,@('C', $listaGen[0]) }
+        if ($roles -contains 'D' -and $listaGen.Count -ge 2) { $propias += ,@('D', $listaGen[1]) }
+        foreach ($p in $propias) {
+            if ($ipsLocales.Count -gt 0 -and $ipsLocales -notcontains $p[1]) {
+                Write-Aviso "La IP del nodo $($p[0]) ($($p[1])) no es de esta PC. IPs de esta PC: $($ipsLocales -join ', ')."
+                if (-not (Read-SiNo '¿Continuar igual?' $false)) { Stop-Centinela "Repita 'centinela.cmd configurar' con la IP correcta." }
+            }
+        }
         $w = if ($Workers) { $true } elseif ($SinWorkers) { $false } elseif ($Si) { Test-Workers $cfg } else { Read-SiNo '¿Levantar también workers de ingesta y correlación en C/D (reparto de carga)?' (Test-Workers $cfg) }
         $cambios['NODE_A_IP'] = $a; $cambios['NODE_B_IP'] = $b; $cambios['GENERATOR_IPS'] = $g
         $cambios['WORKERS'] = if ($w) { 'true' } else { 'false' }
@@ -808,6 +928,15 @@ function Invoke-Configurar {
         $bytes = New-Object byte[] 36
         [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
         $cambios['PLATE_HMAC_SECRET'] = ([Convert]::ToBase64String($bytes) -replace '[+/=]', 'x')
+    }
+    # Si esta PC corría otro modo (p. ej. una sola PC y ahora el nodo A), sus contenedores siguen encendidos
+    # con los mismos puertos y volverían al reiniciar: se ofrece detenerlos (los datos se conservan)
+    $sobran = @($rolesPrevios | Where-Object { $roles -notcontains $_ })
+    if ($sobran.Count -gt 0 -and (Test-DockerCorriendo)) {
+        $encendidos = @($sobran | Where-Object { @(Get-ComposeServicios $_ $cfg | Where-Object { $_.State -eq 'running' }).Count -gt 0 })
+        if ($encendidos.Count -gt 0 -and (Read-SiNo "Esta PC tenía configurado el nodo/modo $($encendidos -join ', ') y sigue encendido. ¿Detenerlo? (sus datos se conservan)" $true)) {
+            foreach ($r in $encendidos) { $null = Invoke-Compose $r $cfg @('down') }
+        }
     }
     Save-Env $cambios
     Save-Local $roles
@@ -832,7 +961,15 @@ function Invoke-Configurar {
     if ($unico) { Write-Info 'Siguiente paso: centinela.cmd iniciar' }
     else {
         Write-Info "Esta PC: nodo(s) $($roles -join ', ')."
+        # Valores que comparten todas las PCs: si cambiaron aquí, las demás deben recibir este .env
+        $compartidas = @('NODE_A_IP', 'NODE_B_IP', 'GENERATOR_IPS', 'WORKERS', 'WORKER_INGESTION_PORT', 'WORKER_CORRELATION_PORT')
+        $cambiadas = @($compartidas | Where-Object { $cambios.Contains($_) -and [string]$previo[$_] -ne [string]$cambios[$_] })
         if (-not $existe) { Write-Aviso "Copie el archivo .env a la carpeta del proyecto de las otras PCs y ejecute ahí 'centinela.cmd configurar'." }
+        elseif ($cambiadas.Count -gt 0) {
+            Write-Aviso "Cambiaron valores que usan todas las PCs ($($cambiadas -join ', '))."
+            Write-Info  "Copie este .env ($ArchivoEnv) a las demás PCs y ejecute ahí 'centinela.cmd configurar'"
+            Write-Info  '(en el nodo B eso también actualiza qué generadores mide Prometheus).'
+        }
         Write-Info 'Orden de arranque: nodo A -> nodo B -> nodos C/D, con "centinela.cmd iniciar" en cada PC.'
     }
 }
@@ -942,6 +1079,29 @@ function Wait-Saludable([string]$Rol, $Cfg) {
     return $false
 }
 
+# Módulos con imagen propia que necesita cada rol
+function Get-ModulosPropios([string[]]$Roles, $Cfg) {
+    $modulos = @()
+    foreach ($r in $Roles) {
+        switch ($r) {
+            'UNICO' { $modulos += @('sensor-simulator', 'ingestion-service', 'correlation-engine', 'alert-service') }
+            'B' { $modulos += @('ingestion-service', 'correlation-engine', 'alert-service') }
+            { $_ -in @('C', 'D') } {
+                $modulos += 'sensor-simulator'
+                if (Test-Workers $Cfg) { $modulos += @('ingestion-service', 'correlation-engine') }
+            }
+        }
+    }
+    return @($modulos | Select-Object -Unique)
+}
+
+# Módulos que habría que construir con BUILD_TARGET=prebuilt sin tener su jar compilado en esta PC
+function Get-JarsFaltantes([string[]]$Roles, $Cfg) {
+    return @(Get-ModulosPropios $Roles $Cfg | Where-Object {
+            $imagen = & $DockerExe images -q "centinela/${_}:1.0.0" 2>$null
+            -not $imagen -and -not (Test-Path -LiteralPath ([IO.Path]::Combine($Raiz, $_, 'target', 'app.jar'))) })
+}
+
 function Invoke-Iniciar {
     Assert-Docker
     Assert-Configurado
@@ -955,6 +1115,27 @@ function Invoke-Iniciar {
         Invoke-CompilarJar
         $cfg = Get-Config
     }
+    # El .env de la PC que compiló dice BUILD_TARGET=prebuilt, pero en esta PC (un clon nuevo) no están los jar
+    $targetPrevio = $env:BUILD_TARGET
+    if (-not $Compilar -and ([string]$cfg['BUILD_TARGET']).Trim() -eq 'prebuilt') {
+        $faltan = @(Get-JarsFaltantes $roles $cfg)
+        if ($faltan.Count -gt 0) {
+            Write-Aviso "En esta PC no están compilados: $($faltan -join ', ')."
+            Write-Info  'Se construyen con Maven dentro de Docker (la primera vez tarda unos minutos y necesita internet).'
+            $env:BUILD_TARGET = 'runtime'   # las variables del proceso tienen prioridad sobre el .env
+        }
+    }
+    try {
+        Start-Nodos $roles $cfg
+    } finally {
+        $env:BUILD_TARGET = $targetPrevio
+    }
+    Show-Urls $cfg
+}
+
+function Start-Nodos([string[]]$Roles, $Cfg) {
+    $roles = $Roles
+    $cfg = $Cfg
     foreach ($rol in $roles) {
         if ($rol -in @('B', 'C', 'D') -and $roles -notcontains 'A') {
             $ipA = $cfg['NODE_A_IP']
@@ -979,7 +1160,6 @@ function Invoke-Iniciar {
         }
         $null = Wait-Saludable $rol $cfg
     }
-    Show-Urls $cfg
 }
 
 function Show-Urls($Cfg) {
@@ -1079,15 +1259,37 @@ function Invoke-Escenarios {
 
 function Invoke-Escenario {
     if (-not $Objetivo) { Stop-Centinela 'Indique el escenario, p. ej.: centinela.cmd escenario tabla-2-4  (vea "centinela.cmd escenarios")' }
-    $u = Get-Urls (Get-Config)
+    $cfg = Get-Config
+    $u = Get-Urls $cfg
     $url = '{0}/api/scenarios/{1}?speed={2}' -f $u.Simulador, $Objetivo, (Get-Velocidad)
     if ($Zona -gt 0) { $url += "&zone=$Zona" }
     $r = Invoke-Api 'POST' $url
     Write-Ok "Escenario '$($r.title)' lanzado. Mírelo en la consola: $($u.Consola)"
+    if ($r.isolation) { Write-Info $r.isolation }
+    # Con dos generadores, el otro tampoco debe meter ruido en las zonas del escenario
+    $zonas = @($r.quietZones) -join ','
+    if ($zonas -and $r.quietSeconds) {
+        $segundos = [int]$r.quietSeconds
+        foreach ($s in @(Get-Simuladores $cfg | Where-Object { $_.Url -ne $u.Simulador })) {
+            try {
+                $null = Invoke-Api 'POST' ('{0}/api/simulator/quiet?zones={1}&seconds={2}' -f $s.Url, $zonas, [math]::Max(1, [math]::Min(3600, $segundos))) @{} 5
+                Write-Info "El simulador del nodo $($s.Nodo) tampoco mete ruido en esas zonas."
+            } catch { Write-Aviso "No pude avisar al simulador del nodo $($s.Nodo): su tráfico de fondo puede mezclarse con el escenario." }
+        }
+    }
+    foreach ($e in @($r.expected)) {
+        Write-Info ('Se espera {0} en la Zona {1} (severidad mínima {2}) en menos de {3} s.' -f $e.alertType, $e.zoneId, $e.minSeverity, $e.withinSeconds)
+    }
 }
 
 function Invoke-Validar {
-    $u = Get-Urls (Get-Config)
+    $cfg = Get-Config
+    $u = Get-Urls $cfg
+    # La validación corre en un simulador; si hay otro (nodo D), que no meta ruido mientras tanto (~8 min)
+    foreach ($s in @(Get-Simuladores $cfg | Where-Object { $_.Url -ne $u.Simulador })) {
+        try { $null = Invoke-Api 'POST' ('{0}/api/simulator/quiet?zones=1,2,3,4,5,6,7,8,9,10,11,12&seconds=480' -f $s.Url) @{} 5 }
+        catch { Write-Aviso "No pude avisar al simulador del nodo $($s.Nodo): su tráfico de fondo puede mezclarse con la validación." }
+    }
     $r = Invoke-Api 'POST' "$($u.Simulador)/api/validation"
     Write-Titulo "Validación automática ($($r.total) correlaciones esperadas, ~2,5 min)"
     do {
@@ -1103,17 +1305,28 @@ function Invoke-Validar {
     if ($r.status -eq 'PASSED') { Write-Ok "Resultado: $($r.passed)/$($r.total) PASSED" } else { Write-Fallo "Resultado: $($r.passed)/$($r.total) $($r.status)"; exit 1 }
 }
 
+# Pico y tráfico de fondo actúan en todos los generadores (C simula unas zonas y D otras), o en el de -Nodo
 function Invoke-Pico {
-    $u = Get-Urls (Get-Config)
-    $null = Invoke-Api 'POST' ('{0}/api/simulator/burst?multiplier={1}&seconds={2}' -f $u.Simulador, $Multiplicador, $Segundos)
-    Write-Ok "Pico x$Multiplicador durante $Segundos s. Mírelo en Grafana: $($u.Grafana)"
+    $cfg = Get-Config
+    foreach ($s in @(Get-SimuladoresObjetivo $cfg)) {
+        try {
+            $null = Invoke-Api 'POST' ('{0}/api/simulator/burst?multiplier={1}&seconds={2}' -f $s.Url, $Multiplicador, $Segundos)
+            Write-Ok "Nodo $($s.Nodo): pico x$Multiplicador durante $Segundos s."
+        } catch { Write-Fallo "Nodo $($s.Nodo): $($_.Exception.Message)" }
+    }
+    Write-Info "Mírelo en Grafana: $((Get-Urls $cfg).Grafana)"
 }
 
 function Invoke-Fondo {
     $activar = ([string]$Objetivo).ToLower() -notin @('off', 'no', 'apagar', 'false', '0')
-    $u = Get-Urls (Get-Config)
-    $null = Invoke-Api 'POST' ('{0}/api/simulator/baseline?enabled={1}' -f $u.Simulador, $activar.ToString().ToLower())
-    if ($activar) { Write-Ok 'Tráfico de fondo encendido.' } else { Write-Ok 'Tráfico de fondo apagado (útil para ver un escenario aislado).' }
+    $cfg = Get-Config
+    foreach ($s in @(Get-SimuladoresObjetivo $cfg)) {
+        try {
+            $null = Invoke-Api 'POST' ('{0}/api/simulator/baseline?enabled={1}' -f $s.Url, $activar.ToString().ToLower())
+            if ($activar) { Write-Ok "Nodo $($s.Nodo): tráfico de fondo encendido." } else { Write-Ok "Nodo $($s.Nodo): tráfico de fondo apagado." }
+        } catch { Write-Fallo "Nodo $($s.Nodo): $($_.Exception.Message)" }
+    }
+    if (-not $activar) { Write-Info 'Los escenarios ya corren aislados del ruido de fondo; apagarlo solo deja la consola más tranquila.' }
 }
 
 function Invoke-Replay {
@@ -1122,6 +1335,58 @@ function Invoke-Replay {
     $url = '{0}/api/replay?resource={1}&speed={2}&jitter=true' -f $u.Simulador, $recurso, (Get-Velocidad)
     $r = Invoke-Api 'POST' $url @{} 60
     Write-Ok "Replay de $recurso lanzado: $($r | ConvertTo-Json -Compress)"
+}
+
+# Reporte ciudadano o pánico como los manda la app del celular: por la puerta HTTP de la ingesta (nodo B)
+function Send-App([string]$Ruta, [hashtable]$Cuerpo) {
+    $u = Get-Urls (Get-Config)
+    $json = $Cuerpo | ConvertTo-Json -Depth 4 -Compress
+    # Se mandan los bytes en UTF-8: con un texto, PowerShell 5.1 lo enviaría en otra codificación y se perderían las tildes
+    $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+    try {
+        return Invoke-RestMethod -Method Post -Uri "$($u.Ingesta)$Ruta" -Body $bytes -ContentType 'application/json; charset=utf-8' `
+            -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+    } catch {
+        $detalle = $_.Exception.Message
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detalle = $_.ErrorDetails.Message }
+        Stop-Centinela "La ingesta no aceptó el evento ($($u.Ingesta)$Ruta): $detalle"
+    }
+}
+
+function Get-ZonaDemo([int]$PorDefecto) {
+    $z = if ($Zona -gt 0) { $Zona } else { $PorDefecto }
+    if ($z -lt 1 -or $z -gt 12) { Stop-Centinela "Zona inválida: $z (de 1 a 12)." }
+    return $z
+}
+
+function Invoke-Reporte {
+    if (-not $Objetivo) { Stop-Centinela 'Escriba el texto, p. ej.: centinela.cmd reporte "Asaltaron a una señora en la parada" -Zona 4 -Tipo ROBO' }
+    $zona = Get-ZonaDemo 4
+    $tipo = if ($Tipo) { $Tipo.Trim().ToUpper() } else { 'ROBO' }
+    $validos = @('ROBO', 'ACCIDENTE', 'INCENDIO', 'ALTERCADO', 'PERSONA_SOSPECHOSA', 'OTRO')
+    if ($tipo -notin $validos) { Stop-Centinela "Tipo de reporte inválido: $tipo (use $($validos -join ', '))." }
+    $r = Send-App '/api/v1/citizen-reports' @{
+        tipo_evento = $tipo; mensaje_descriptivo = $Objetivo; origen = 'APP'
+        reportante_id = 'CIU-CLI-{0:D5}' -f (Get-Random -Maximum 100000)
+        ubicacion_aproximada = @{ nombre = "Zona $zona" }
+    }
+    Write-Ok "Reporte ciudadano $tipo en la Zona $zona recibido ($($r.estado), evento $($r.event_id))."
+    Write-Info 'La consola lo muestra con su texto (placas enmascaradas) en la evidencia de la alerta que lo use; un reporte'
+    Write-Info 'de ACCIDENTE o INCENDIO sin otras señales queda a los 90 s como posible falso positivo.'
+}
+
+function Invoke-Panico {
+    $zona = Get-ZonaDemo 10
+    $tipo = if ($Tipo) { $Tipo.Trim().ToUpper() } else { 'PANICO' }
+    $validos = @('PANICO', 'ROBO', 'ASALTO', 'EMERGENCIA_MEDICA', 'INCENDIO', 'ACCIDENTE')
+    if ($tipo -notin $validos) { Stop-Centinela "Tipo de pánico inválido: $tipo (use $($validos -join ', '))." }
+    $r = Send-App '/api/v1/panic' @{
+        tipo_alerta = $tipo; identificador_dispositivo = 'APP-CLI{0:D5}' -f (Get-Random -Maximum 100000)
+        zona_geografica = @{ nombre = "Zona $zona" }
+        user_context = @{ usuario_id = 'CIU-CLI-{0:D5}' -f (Get-Random -Maximum 100000); plataforma = 'WINDOWS'; version_app = 'centinela.cmd' }
+    }
+    Write-Ok "Botón de pánico $tipo en la Zona $zona recibido ($($r.estado), evento $($r.event_id))."
+    if ($tipo -in @('PANICO', 'ROBO', 'ASALTO')) { Write-Info 'Si nada lo corrobora en la zona, a los 90 s queda como posible falso positivo (fila 2 de la tabla 2.4).' }
 }
 
 function Invoke-Tarea {
@@ -1284,9 +1549,6 @@ function Invoke-Pruebas {
     if ($codigo -eq 0) { Write-Ok 'Todas las pruebas pasaron.' } else { Stop-Centinela 'Hay pruebas que fallaron (ver arriba).' }
 }
 
-$ImagenesBase = @('apache/kafka:3.9.1', 'timescale/timescaledb:2.17.2-pg16', 'redis:7.4-alpine', 'grafana/grafana:11.4.0', 'prom/prometheus:v3.1.0')
-$ImagenesPropias = @('centinela/sensor-simulator:1.0.0', 'centinela/ingestion-service:1.0.0', 'centinela/correlation-engine:1.0.0', 'centinela/alert-service:1.0.0')
-
 function Invoke-ExportarImagenes {
     Assert-Docker
     $archivo = if ($Objetivo) { $Objetivo } else { Join-Path $Raiz 'centinela-imagenes.tar' }
@@ -1297,7 +1559,8 @@ function Invoke-ExportarImagenes {
     foreach ($i in $ImagenesBase) { & $DockerExe pull $i | Out-Host }
     Write-Titulo "Guardando en $archivo"
     & $DockerExe save -o $archivo @($ImagenesPropias + $ImagenesBase) | Out-Host
-    if ($LASTEXITCODE -eq 0) { Write-Ok "Listo: copie $archivo a cada PC y ejecute 'centinela.cmd importar-imagenes'." }
+    if ($LASTEXITCODE -ne 0) { Stop-Centinela 'docker save falló (ver arriba): revise el espacio libre en disco.' }
+    Write-Ok "Listo: copie $archivo a cada PC y ejecute 'centinela.cmd importar-imagenes'."
 }
 
 function Invoke-ImportarImagenes {
@@ -1305,6 +1568,8 @@ function Invoke-ImportarImagenes {
     $archivo = if ($Objetivo) { $Objetivo } else { Join-Path $Raiz 'centinela-imagenes.tar' }
     if (-not (Test-Path -LiteralPath $archivo)) { Stop-Centinela "No existe $archivo" }
     & $DockerExe load -i $archivo | Out-Host
+    if ($LASTEXITCODE -ne 0) { Stop-Centinela 'docker load falló (ver arriba): el archivo puede estar incompleto; cópielo de nuevo.' }
+    Write-Ok 'Imágenes cargadas. Siguiente paso: centinela.cmd iniciar  (sin -Compilar: ya no hace falta construir nada).'
 }
 
 # Menú para el doble clic en centinela.cmd
@@ -1358,6 +1623,8 @@ switch ($Comando.ToLower()) {
     'escenarios' { Invoke-Escenarios }
     'escenario' { Invoke-Escenario }
     'validar' { Invoke-Validar }
+    'reporte' { Invoke-Reporte }
+    'panico' { Invoke-Panico }
     'pico' { Invoke-Pico }
     'caida' { Invoke-Caida $false }
     'recuperar' { Invoke-Caida $true }

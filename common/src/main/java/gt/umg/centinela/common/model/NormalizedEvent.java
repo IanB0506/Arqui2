@@ -49,6 +49,21 @@ public record NormalizedEvent(
         String origin,
         Map<String, String> attributes) {
 
+    /** Atributo que marca un evento reenviado desde un spool: llego tarde por una caida. */
+    public static final String ATTR_SPOOLED = "reenviado_spool";
+    /** Texto libre de un reporte ciudadano (dato no estructurado, con las placas enmascaradas). */
+    public static final String ATTR_MESSAGE = "mensaje";
+    public static final String ATTR_VEHICLE_MODEL = "modelo";
+    public static final String ATTR_VEHICLE_COLOR = "color";
+    public static final String ATTR_DIRECTION = "direccion";
+    public static final String ATTR_SPEED_LIMIT = "limite";
+    public static final String ATTR_PLATFORM = "plataforma";
+
+    /** true si el evento espero en un spool mientras Kafka no estaba disponible. */
+    public boolean replayedFromSpool() {
+        return attributes != null && "true".equals(attributes.get(ATTR_SPOOLED));
+    }
+
     /** Texto corto y legible del evento, usado como evidencia en las alertas. */
     public String summary() {
         StringBuilder sb = new StringBuilder(sensorType.label()).append(' ').append(subtype);

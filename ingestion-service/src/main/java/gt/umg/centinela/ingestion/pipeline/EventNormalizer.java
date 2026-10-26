@@ -40,7 +40,7 @@ import java.util.stream.Collectors;
 public class EventNormalizer {
 
     /** Atributo que marca un evento reenviado desde un spool (llego tarde por una caida). */
-    public static final String ATTR_SPOOLED = "reenviado_spool";
+    public static final String ATTR_SPOOLED = NormalizedEvent.ATTR_SPOOLED;
     /** Segundos entre que ocurrio el evento y que llego a la ingesta. */
     public static final String ATTR_ORIGIN_DELAY = "retraso_origen_s";
 
@@ -115,7 +115,7 @@ public class EventNormalizer {
         double[] point = fromApp ? generalize(pointOf(e.zone(), zone)) : pointOf(e.zone(), zone);
         Map<String, String> attributes = new LinkedHashMap<>();
         if (e.userContext() != null) {
-            put(attributes, "plataforma", e.userContext().platform());
+            put(attributes, NormalizedEvent.ATTR_PLATFORM, e.userContext().platform());
             put(attributes, "version_app", e.userContext().appVersion());
         }
         String sensorId = fromApp ? "APP-" + pseudonymizer.pseudonymizeId(e.deviceId()).substring(0, 12) : e.deviceId();
@@ -134,8 +134,8 @@ public class EventNormalizer {
         double lon = e.location().longitude() != null ? e.location().longitude() : zone.longitude();
         boolean speeding = e.estimatedSpeed() > threshold(properties.defaultSpeedLimit());
         Map<String, String> attributes = new LinkedHashMap<>();
-        put(attributes, "modelo", e.vehicleModel());
-        put(attributes, "color", e.vehicleColor());
+        put(attributes, NormalizedEvent.ATTR_VEHICLE_MODEL, e.vehicleModel());
+        put(attributes, NormalizedEvent.ATTR_VEHICLE_COLOR, e.vehicleColor());
         return new NormalizedEvent(e.eventId(), SensorType.LPR, e.location().sensorId(), zone.id(), zone.name(), lat, lon,
                 e.timestamp(), now(), speeding ? "EXCESO_VELOCIDAD" : "LECTURA_PLACA", e.estimatedSpeed(), 1.0, speeding,
                 pseudonymizer.pseudonymizePlate(e.plate()), PlatePseudonymizer.maskPlate(e.plate()), null, "SENSOR",
@@ -150,8 +150,8 @@ public class EventNormalizer {
         boolean wrongWay = Boolean.TRUE.equals(e.wrongWay());
         String subtype = wrongWay ? "CONTRAVIA" : speeding ? "EXCESO_VELOCIDAD" : "NORMAL";
         Map<String, String> attributes = new LinkedHashMap<>();
-        attributes.put("direccion", e.direction().name());
-        attributes.put("limite", String.valueOf(limit));
+        attributes.put(NormalizedEvent.ATTR_DIRECTION, e.direction().name());
+        attributes.put(NormalizedEvent.ATTR_SPEED_LIMIT, String.valueOf(limit));
         return new NormalizedEvent(e.eventId(), SensorType.SPEED, e.sensorId(), zone.id(), zone.name(),
                 zone.latitude(), zone.longitude(), e.timestamp(), now(), subtype, e.speed(), 1.0,
                 speeding || wrongWay, null, null, null, "SENSOR", attributes);
@@ -173,7 +173,9 @@ public class EventNormalizer {
         double[] point = generalize(pointOf(e.location(), zone));
         Map<String, String> attributes = new LinkedHashMap<>();
         if (e.message() != null) {
-            attributes.put("mensaje", e.message().length() > 200 ? e.message().substring(0, 200) : e.message());
+            // dato no estructurado: se conserva para el operador, pero sin placas en claro
+            String message = PlatePseudonymizer.maskPlatesInText(e.message());
+            attributes.put(NormalizedEvent.ATTR_MESSAGE, message.length() > 200 ? message.substring(0, 200) : message);
         }
         return new NormalizedEvent(e.eventId(), SensorType.CITIZEN_REPORT, "REPORTE-" + e.origin().name(), zone.id(),
                 zone.name(), point[0], point[1], e.timestamp(), now(), e.eventType().name(), null, 1.0,

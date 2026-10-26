@@ -4,6 +4,7 @@ import gt.umg.centinela.alerts.live.AlertBroadcaster;
 import gt.umg.centinela.alerts.persistence.AlertRepository;
 import gt.umg.centinela.alerts.persistence.AlertView;
 import gt.umg.centinela.alerts.persistence.AuditRepository;
+import gt.umg.centinela.alerts.persistence.EventRepository;
 import gt.umg.centinela.common.geo.Zone;
 import gt.umg.centinela.common.geo.ZoneCatalog;
 import jakarta.validation.Valid;
@@ -36,6 +37,7 @@ import java.util.UUID;
  *   GET   /api/alerts/{id}
  *   PATCH /api/alerts/{id}/validation   {"resolution":"FALSE_POSITIVE","notes":"..."}
  *   GET   /api/alerts/stream            (Server-Sent Events)
+ *   GET   /api/events/{id}?at=...       (evento original de una evidencia: trazabilidad alerta -> sensor)
  *   GET   /api/stats/summary
  *   GET   /api/zones
  * </pre>
@@ -47,11 +49,14 @@ public class AlertController {
     private final AlertRepository alerts;
     private final AuditRepository audit;
     private final AlertBroadcaster broadcaster;
+    private final EventRepository events;
 
-    public AlertController(AlertRepository alerts, AuditRepository audit, AlertBroadcaster broadcaster) {
+    public AlertController(AlertRepository alerts, AuditRepository audit, AlertBroadcaster broadcaster,
+                           EventRepository events) {
         this.alerts = alerts;
         this.audit = audit;
         this.broadcaster = broadcaster;
+        this.events = events;
     }
 
     public record ValidationRequest(
@@ -72,6 +77,16 @@ public class AlertController {
     @GetMapping("/alerts/{id}")
     public ResponseEntity<AlertView> get(@PathVariable UUID id) {
         return ResponseEntity.of(alerts.findById(id));
+    }
+
+    /**
+     * Evento guardado tal como lo vio el sistema (sin seudonimos internos). {@code at} es la hora del evento
+     * que trae la evidencia: acota la busqueda a su fragmento de la hypertable.
+     */
+    @GetMapping("/events/{id}")
+    public ResponseEntity<Map<String, Object>> event(@PathVariable UUID id,
+                                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant at) {
+        return ResponseEntity.of(events.find(id, at));
     }
 
     @PatchMapping("/alerts/{id}/validation")

@@ -139,6 +139,11 @@ services:
       args: { MODULE: correlation-engine }
     image: centinela/correlation-engine:1.0.0
     ports: ["${CORRELATION_PORT:-8082}:8082"]
+    environment:
+      <<: *java-env
+      SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/config/   # reglas editables sin recompilar (infra/correlation)
+    volumes:
+      - ./infra/correlation:/config:ro
     depends_on:
       kafka: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -180,6 +185,11 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/centro-de-monitoreo.json
+      # on-premise sin internet: Grafana no consulta servicios externos (actualizaciones, noticias, telemetria)
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
       TSDB_HOST: timescaledb:5432
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana-reader}
       PROMETHEUS_URL: http://prometheus:9090

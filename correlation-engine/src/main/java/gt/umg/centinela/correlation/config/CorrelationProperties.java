@@ -18,10 +18,10 @@ public class CorrelationProperties {
     private Duration incidentCooldown = Duration.ofMinutes(10);
     /** Tiempo durante el que se sigue una placa sospechosa entre zonas. */
     private Duration suspectTracking = Duration.ofMinutes(30);
-    /** Si un evento llega con mas atraso que esto, el motor esta poniendose al dia tras una caida. */
-    private Duration catchUpThreshold = Duration.ofSeconds(10);
+    /** Si una particion tiene mas mensajes en espera que esto, el motor esta poniendose al dia tras una caida. */
+    private long catchUpLag = 50;
     /** Mientras dure la puesta al dia (y este tiempo despues) no se clasifican falsos positivos. */
-    private Duration catchUpHold = Duration.ofSeconds(20);
+    private Duration catchUpHold = Duration.ofSeconds(40);
     private DeviceAbuse deviceAbuse = new DeviceAbuse();
     private List<RuleDefinition> rules = new ArrayList<>();
 
@@ -88,12 +88,12 @@ public class CorrelationProperties {
         this.suspectTracking = suspectTracking;
     }
 
-    public Duration getCatchUpThreshold() {
-        return catchUpThreshold;
+    public long getCatchUpLag() {
+        return catchUpLag;
     }
 
-    public void setCatchUpThreshold(Duration catchUpThreshold) {
-        this.catchUpThreshold = catchUpThreshold;
+    public void setCatchUpLag(long catchUpLag) {
+        this.catchUpLag = catchUpLag;
     }
 
     public Duration getCatchUpHold() {

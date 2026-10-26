@@ -85,9 +85,15 @@ public class EventFactory {
     }
 
     public SimulatedEvent randomLpr(int zoneId) {
-        boolean anomaly = random().nextDouble() < properties.getLprAnomalyProbability();
-        double speed = anomaly ? random().nextDouble(90, 130) : clamp(random().nextGaussian(45, 12), 5, 75);
-        return lpr(zoneId, random().nextInt(1, 4), randomPlate(), speed);
+        if (random().nextDouble() >= properties.getLprAnomalyProbability()) {
+            return normalLpr(zoneId);
+        }
+        return lpr(zoneId, random().nextInt(1, 4), randomPlate(), random().nextDouble(90, 130));
+    }
+
+    /** Lectura sin novedad: velocidad normal (nunca llega al umbral de exceso). */
+    public SimulatedEvent normalLpr(int zoneId) {
+        return lpr(zoneId, random().nextInt(1, 4), randomPlate(), clamp(random().nextGaussian(45, 12), 5, 75));
     }
 
     // ------------------------------------------------------------------ sensores de velocidad
@@ -101,14 +107,25 @@ public class EventFactory {
     }
 
     public SimulatedEvent randomSpeed(int zoneId) {
+        boolean anomaly = random().nextDouble() < properties.getSpeedAnomalyProbability();
+        boolean wrongWay = random().nextDouble() < 0.0005;
+        if (!anomaly && !wrongWay) {
+            return normalSpeed(zoneId);
+        }
         int sensorIndex = random().nextInt(1, 5);
         int limit = speedLimit(sensorIndex);
-        boolean anomaly = random().nextDouble() < properties.getSpeedAnomalyProbability();
-        double speed = anomaly
-                ? limit * random().nextDouble(1.4, 2.0)
-                : clamp(random().nextGaussian(limit * 0.8, limit * 0.15), 3, limit * 1.25);
-        boolean wrongWay = random().nextDouble() < 0.0005;
+        double speed = anomaly ? limit * random().nextDouble(1.4, 2.0) : normalSpeedFor(limit);
         return speed(zoneId, sensorIndex, speed, wrongWay);
+    }
+
+    /** Lectura dentro del limite (hasta 125 %, la ingesta marca exceso desde 130 %), en el sentido correcto. */
+    public SimulatedEvent normalSpeed(int zoneId) {
+        int sensorIndex = random().nextInt(1, 5);
+        return speed(zoneId, sensorIndex, normalSpeedFor(speedLimit(sensorIndex)), false);
+    }
+
+    private static double normalSpeedFor(int limit) {
+        return clamp(random().nextGaussian(limit * 0.8, limit * 0.15), 3, limit * 1.25);
     }
 
     // ------------------------------------------------------------------ sensores acusticos
@@ -128,10 +145,16 @@ public class EventFactory {
                 new SoundType[]{SoundType.RUIDO_AMBIENTAL, SoundType.VIDRIOS_ROTOS, SoundType.CHOQUE_VEHICULAR,
                         SoundType.EXPLOSION, SoundType.DISPARO},
                 new double[]{95, 2, 1.5, 1, 0.5});
-        boolean ambient = type == SoundType.RUIDO_AMBIENTAL;
-        double db = ambient ? random().nextDouble(55, 85) : random().nextDouble(90, 125);
-        double probability = ambient ? random().nextDouble(0.01, 0.2) : random().nextDouble(0.25, 0.72);
-        return acoustic(zoneId, random().nextInt(1, 3), type, db, probability);
+        if (type == SoundType.RUIDO_AMBIENTAL) {
+            return ambientAcoustic(zoneId);
+        }
+        return acoustic(zoneId, random().nextInt(1, 3), type, random().nextDouble(90, 125), random().nextDouble(0.25, 0.72));
+    }
+
+    /** Ruido ambiental: nunca es un sonido critico. */
+    public SimulatedEvent ambientAcoustic(int zoneId) {
+        return acoustic(zoneId, random().nextInt(1, 3), SoundType.RUIDO_AMBIENTAL, random().nextDouble(55, 85),
+                random().nextDouble(0.01, 0.2));
     }
 
     // ------------------------------------------------------------------ reportes ciudadanos
