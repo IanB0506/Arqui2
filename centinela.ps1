@@ -365,7 +365,11 @@ function Show-Relojes($Cfg) {
 
 function Invoke-Compose([string]$Rol, $Cfg, [string[]]$Argumentos) {
     $info = Get-InfoRol $Rol $Cfg
-    $base = @('compose', '--env-file', $ArchivoEnv, '-f', $info.Archivo, '-p', $info.Proyecto) + $info.Perfiles
+    $perfiles = $info.Perfiles
+    # Detener siempre incluye los workers: si esta PC los tuvo (otro .env u otro rol), sin el perfil
+    # quedarían encendidos con sus puertos (8081 y 8082, los mismos del nodo B)
+    if ($Rol -in @('C', 'D') -and $Argumentos.Count -gt 0 -and $Argumentos[0] -in @('down', 'stop', 'rm')) { $perfiles = @('--profile', 'workers') }
+    $base = @('compose', '--env-file', $ArchivoEnv, '-f', $info.Archivo, '-p', $info.Proyecto) + $perfiles
     $previos = @{}
     foreach ($k in $info.Entorno.Keys) { $previos[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $info.Entorno[$k]) }
     try {
@@ -387,7 +391,9 @@ function Get-ComposeServicios([string]$Rol, $Cfg) {
 
 # Contenedor que publica el puerto y su proyecto de docker compose (centinela, centinela-nodo-a, ...)
 function Get-ContenedorConPuerto([int]$Puerto) {
-    $lineas = & $DockerExe ps --filter "publish=$Puerto" --format '{{.Names}}|{{.Label "com.docker.compose.project"}}' 2>$null
+    # Sin comillas dentro del formato: PowerShell 5.1 las borra al llamar a docker.exe y la plantilla
+    # falla ("function com not defined"); Go acepta el texto entre acentos graves
+    $lineas = & $DockerExe ps --filter "publish=$Puerto" --format '{{.Names}}|{{.Label `com.docker.compose.project`}}' 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $lineas) { return $null }
     $partes = ([string]($lineas | Select-Object -First 1)).Split('|')
     return @{ Nombre = $partes[0]; Proyecto = $(if ($partes.Count -gt 1) { $partes[1] } else { '' }) }
@@ -461,6 +467,26 @@ function Test-Tcp([string]$Equipo, [int]$Puerto, [int]$Milisegundos = 2000) {
         $cliente.EndConnect($intento)
         return $true
     } catch { return $false } finally { $cliente.Close() }
+}
+
+# ¿La IP cae en la subred de alguna tarjeta de esta PC? Ante la duda responde que sí (solo sirve para avisar)
+function Test-MismaSubred([string]$Ip) {
+    if (-not $EsWindows -or -not (Test-IpValida $Ip)) { return $true }
+    try {
+        $destino = [Net.IPAddress]::Parse($Ip).GetAddressBytes()
+        foreach ($d in @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -notlike '127.*' })) {
+            $local = [Net.IPAddress]::Parse($d.IPAddress).GetAddressBytes()
+            $bits = [int]$d.PrefixLength
+            $igual = $true
+            for ($i = 0; $i -lt 4 -and $igual; $i++) {
+                $mascara = if ($bits -ge 8) { 255 } elseif ($bits -le 0) { 0 } else { (0xFF -shl (8 - $bits)) -band 0xFF }
+                $bits -= 8
+                $igual = (($local[$i] -band $mascara) -eq ($destino[$i] -band $mascara))
+            }
+            if ($igual) { return $true }
+        }
+        return $false
+    } catch { return $true }
 }
 
 function Get-AutorizacionAdmin($Cfg) {
@@ -594,6 +620,11 @@ function Test-Puerto([int]$Puerto, $Rangos, [string[]]$Proyectos = @()) {
         'reservado' { return @{ Estado = 'reservado'; Detalle = 'Windows no permite usarlo (rango reservado, antivirus o firewall)' } }
         'ocupado' {
             $dueno = Get-DuenoPuerto $Puerto
+            # Ningún contenedor lo publica (se revisó arriba) y aun así Docker Desktop lo escucha: quedó
+            # retenido de un intento anterior. Cambiar el puerto no es la solución; reiniciar Docker sí.
+            if ($dueno -match '^(com\.docker\.|vpnkit|wslrelay|dockerd)') {
+                return @{ Estado = 'retenido'; Detalle = "Docker Desktop ($dueno) lo retiene sin ningún contenedor, de un intento anterior" }
+            }
             $quien = if ($dueno) { "lo usa el programa $dueno" } else { 'lo usa otro programa' }
             return @{ Estado = 'ocupado'; Detalle = $quien }
         }
@@ -660,6 +691,11 @@ function Repair-Puertos([string[]]$Roles, $Cfg, [bool]$Corregir) {
     }
     $malos = @($revision | Where-Object { $_.Estado -notin @('libre', 'centinela') })
     if ($malos.Count -eq 0) { return $true }
+    if (@($malos | Where-Object { $_.Estado -eq 'retenido' }).Count -gt 0) {
+        Write-Aviso 'Reinicie Docker Desktop (ícono junto al reloj > Restart) para que suelte esos puertos y repita.'
+        Write-Info  'No cambio los puertos: el .env es el mismo en todas las PCs y cambiarlo aquí las desconectaría.'
+        return $false
+    }
     if (-not $Corregir) {
         if (-not (Read-SiNo 'Hay puertos que Windows no deja usar. ¿Elegir otros libres automáticamente?')) { return $false }
     }
@@ -680,6 +716,41 @@ function Repair-Puertos([string[]]$Roles, $Cfg, [bool]$Corregir) {
         Write-Aviso "Y en ESTA PC ejecute 'centinela.cmd firewall' para abrir el puerto nuevo."
     }
     return $true
+}
+
+# Tras un fallo de "docker compose up": dice quién tiene los puertos del rol y, si es otro modo de
+# Centinela que se encendió mientras tanto (Docker Desktop restaura los contenedores al arrancar),
+# ofrece detenerlo. Devuelve $true si conviene reintentar.
+function Resolve-PuertosTomados([string]$Rol, $Cfg) {
+    $tomados = @(Get-RevisionPuertos @($Rol) $Cfg | Where-Object { $_.Estado -in @('otro-modo', 'ocupado', 'retenido') })
+    foreach ($t in $tomados) { Write-Fallo ('{0} {1}: {2}' -f $t.Variable, $t.Puerto, $t.Detalle) }
+    $otros = @($tomados | Where-Object { $_.Estado -eq 'otro-modo' } | ForEach-Object { $_.Proyecto } | Select-Object -Unique)
+    if ($otros.Count -eq 0) { return $false }
+    if (-not (Read-SiNo "¿Detener $($otros -join ', ') y reintentar? (sus datos se conservan)" $true)) { return $false }
+    foreach ($p in $otros) { $null = Invoke-Compose (Get-RolDeProyecto $p) $Cfg @('down') }
+    Remove-ServiciosSinPuerto $Rol $Cfg
+    return $true
+}
+
+# Contenedores del rol que un "up" fallido ("port is already allocated") dejó a medias: quedan en
+# estado "created" y, si después se arrancan, Docker los corre SIN el puerto aunque ya esté libre.
+# docker compose no los recrea solo (los da por buenos), así que hay que quitarlos.
+function Get-ServiciosSinPuerto([string]$Rol, $Cfg) {
+    $ids = @(& $DockerExe ps -a -q --filter "label=com.docker.compose.project=$((Get-InfoRol $Rol $Cfg).Proyecto)" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $ids.Count -eq 0) { return @() }
+    $formato = '{{index .Config.Labels `com.docker.compose.service`}}|{{.State.Status}}|{{len .HostConfig.PortBindings}}|{{range $k, $v := .NetworkSettings.Ports}}{{if $v}}x{{end}}{{end}}'
+    $lineas = & $DockerExe inspect --format $formato @ids 2>$null
+    return @($lineas | ForEach-Object {
+            $p = ([string]$_).Split('|')
+            if ($p.Count -eq 4 -and ($p[1] -eq 'created' -or ($p[1] -eq 'running' -and $p[3].Length -lt [int]$p[2]))) { $p[0] }
+        })
+}
+
+function Remove-ServiciosSinPuerto([string]$Rol, $Cfg) {
+    $sinPuerto = @(Get-ServiciosSinPuerto $Rol $Cfg)
+    if ($sinPuerto.Count -eq 0) { return }
+    Write-Info "Recreo $($sinPuerto -join ', '): un intento anterior los dejó a medio crear o sin su puerto."
+    $null = Invoke-Compose $Rol $Cfg (@('rm', '-s', '-f') + $sinPuerto)
 }
 
 # =============================================================================================
@@ -1158,19 +1229,57 @@ function Start-Nodos([string[]]$Roles, $Cfg) {
             }
             Write-Host ''
             if ($ok) { Write-Ok "Kafka del nodo A responde en ${ipA}:$($cfg['KAFKA_PORT'])" }
-            else { Write-Aviso "No llego a Kafka en ${ipA}:$($cfg['KAFKA_PORT']). ¿Está iniciado el nodo A y abierto su firewall? Sigo igual: los servicios reintentan solos." }
+            else {
+                Write-Aviso "No llego a Kafka en ${ipA}:$($cfg['KAFKA_PORT']). Sigo igual: los servicios reintentan solos cuando A responda."
+                Show-DiagnosticoNodoA $cfg
+            }
         }
         if ($rol -eq 'B') { Write-ObjetivosPrometheus $cfg }
+        # Con WORKERS=false, los workers que esta PC levantó antes seguirían consumiendo de Kafka sin
+        # que Prometheus los vea: se quitan
+        if ($rol -in @('C', 'D') -and -not (Test-Workers $cfg)) {
+            $viejos = @(Get-ComposeServicios $rol $cfg | Where-Object { $_.Service -like '*-worker' } | ForEach-Object { $_.Service } | Select-Object -Unique)
+            if ($viejos.Count -gt 0) {
+                Write-Info "Quito los workers de una ejecución anterior ($($viejos -join ', ')): WORKERS=false en el .env."
+                $null = Invoke-Compose $rol $cfg (@('rm', '-s', '-f') + $viejos)
+            }
+        }
+        Remove-ServiciosSinPuerto $rol $cfg
         $argumentos = @('up', '-d', '--remove-orphans')
         if ($Compilar) { $argumentos += '--build' }
         $codigo = Invoke-Compose $rol $cfg $argumentos
+        if ($codigo -ne 0 -and (Resolve-PuertosTomados $rol $cfg)) {
+            Write-Info "Reintento el nodo $rol."
+            $codigo = Invoke-Compose $rol $cfg $argumentos
+        }
         if ($codigo -ne 0) {
             Write-Fallo "docker compose terminó con error en el nodo $rol."
-            Write-Info  'Si el error dice "ports are not available" o "forbidden by its access permissions": centinela.cmd puertos -Arreglar'
+            Write-Info  'Si el error dice "port is already allocated" y ningún contenedor usa ese puerto (docker ps): reinicie Docker Desktop y repita.'
+            Write-Info  'Si dice "ports are not available" o "forbidden by its access permissions": centinela.cmd puertos -Arreglar'
             exit 1
         }
         $null = Wait-Saludable $rol $cfg
     }
+}
+
+# Por qué no se alcanza Kafka del nodo A: otra subred, A apagado o su firewall, o Kafka sin levantar
+function Show-DiagnosticoNodoA($Cfg) {
+    $ipA = [string]$Cfg['NODE_A_IP']
+    $kafka = Get-Puerto $Cfg 'KAFKA_PORT'
+    if (-not (Test-MismaSubred $ipA)) {
+        Write-Aviso "Esta PC ($(Get-IpLan)) y el nodo A ($ipA) están en subredes distintas: conéctelas al mismo router, switch o red Wi-Fi, o corrija la IP con 'configurar'."
+    }
+    $responden = @(@('REDIS_PORT', 'DB_PORT') | Where-Object { Test-Tcp $ipA (Get-Puerto $Cfg $_) } | ForEach-Object { Get-Puerto $Cfg $_ })
+    if ($responden.Count -gt 0) {
+        Write-Info "A sí responde en el puerto $($responden -join ' y '): la red está bien, pero Kafka no. En la PC del nodo A: 'centinela.cmd estado' y, si Kafka no está healthy, 'centinela.cmd iniciar'."
+    } else {
+        Write-Info "A no responde en ningún puerto de Centinela. En la PC del nodo A revise:"
+        Write-Info "  1. 'centinela.cmd estado': nodo A encendido y su IP debe ser $ipA (ipconfig)."
+        Write-Info "  2. 'centinela.cmd firewall' (pide administrador) y que el antivirus no tenga su propio firewall."
+        Write-Info "  3. Red privada: Configuración > Red e Internet > propiedades de la red > Privada."
+    }
+    Write-Info "En esta PC, 'centinela.cmd estado' debe mostrar la MISMA huella del .env que en A. Prueba directa:"
+    Write-Info "  powershell -Command Test-NetConnection $ipA -Port $kafka   (TcpTestSucceeded debe ser True)"
 }
 
 function Show-Urls($Cfg) {
