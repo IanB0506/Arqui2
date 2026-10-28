@@ -270,7 +270,8 @@ Con Java 21 instalado también sirve `mvnw.cmd install` (descarga Maven la prime
 | Síntoma | Causa probable | Solución |
 |---|---|---|
 | "...no permitida por sus permisos de acceso" al iniciar | Puerto reservado por Hyper-V/WinNAT (error 10013) | `centinela.cmd puertos -Arreglar` |
-| Los servicios de B o C no alcanzan a Kafka | `NODE_A_IP` incorrecta o firewall de A | `centinela.cmd estado` en B; `centinela.cmd firewall` en A |
+| Los servicios de B o C no alcanzan a Kafka | `NODE_A_IP` o `KAFKA_PORT` distintos entre PCs, o firewall de A | `iniciar` dice si A responde en otros puertos; `centinela.cmd estado` en cada PC (misma huella del `.env`); `centinela.cmd firewall` en A |
+| `port is already allocated` al iniciar | Contenedores de un rol anterior de esa PC (p. ej. los workers del nodo C en 8081 y 8082) o Docker Desktop retiene el puerto | `iniciar` nombra al contenedor y ofrece detenerlo y reintentar; si ningún contenedor lo usa, reiniciar Docker Desktop |
 | Grafana muestra "No data" | Aún no hay datos o reloj desfasado | Esperar 1 minuto; `centinela.cmd requisitos` revisa los relojes |
 | El mapa de Grafana no tiene fondo de calles | Sin internet no cargan los mosaicos de OpenStreetMap | Las zonas, sus nombres, el mapa de calor y las alertas se dibujan igual con la capa local |
 | La validación da menos de 9/9 | Se corrió con `resetState=false` con incidentes abiertos | Usar `centinela.cmd validar` (reinicia el estado) |
