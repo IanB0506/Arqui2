@@ -166,6 +166,15 @@ function Get-Config {
 
 function Get-Puerto($Cfg, [string]$Variable) { return [int]$Cfg[$Variable] }
 
+# Resumen de los valores que comparten todas las PCs (IPs, puertos, workers y llave): dos PCs con distinta
+# huella no se van a entender (puertos distintos, otra llave de seudonimizacion)
+function Get-HuellaConfig($Cfg) {
+    $claves = @('NODE_A_IP', 'NODE_B_IP', 'GENERATOR_IPS', 'WORKERS', 'PLATE_HMAC_SECRET') + @($PuertosPorDefecto.Keys)
+    $texto = ($claves | ForEach-Object { '{0}={1}' -f $_, ([string]$Cfg[$_]).Trim() }) -join "`n"
+    $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($texto))
+    return (($hash[0..3] | ForEach-Object { $_.ToString('X2') }) -join '')
+}
+
 # =============================================================================================
 # Roles de esta PC: UNICO (todo en una), o A / B / C / D (varias PCs)
 # =============================================================================================
@@ -212,6 +221,8 @@ function ConvertTo-Roles([string]$Texto) {
     return @($orden | Where-Object { $roles -contains $_ })
 }
 
+# Llamar siempre como @(Get-Generadores $cfg): con una sola IP, PowerShell devuelve el texto suelto y $gens[0]
+# seria su primer caracter ("1" en vez de "192.168.1.12")
 function Get-Generadores($Cfg) { return @(([string]$Cfg['GENERATOR_IPS']) -split '[,; ]+' | Where-Object { $_ }) }
 
 function Test-Workers($Cfg) { return ([string]$Cfg['WORKERS']).Trim().ToLower() -in @('true', 'si', 'sí', '1', 'yes') }
@@ -481,7 +492,7 @@ function Get-Urls($Cfg) {
     $roles = Get-RolesLocales
     $unico = $roles -contains 'UNICO'
     $ipB = if ($unico -or $roles -contains 'B') { 'localhost' } else { $Cfg['NODE_B_IP'] }
-    $gens = Get-Generadores $Cfg
+    $gens = @(Get-Generadores $Cfg)
     $ipSim = 'localhost'
     if (-not $unico) {
         $letra = if ($Nodo -match '^\s*[CcDd]\s*$') { $Nodo.Trim().ToUpper() } elseif ($roles -contains 'D') { 'D' } else { 'C' }
@@ -504,7 +515,7 @@ function Get-Simuladores($Cfg) {
     $roles = Get-RolesLocales
     if ($roles -contains 'UNICO') { return @(@{ Nodo = 'C'; Url = 'http://localhost:{0}' -f $Cfg['SIMULATOR_PORT'] }) }
     $lista = @()
-    $gens = Get-Generadores $Cfg
+    $gens = @(Get-Generadores $Cfg)
     for ($i = 0; $i -lt [math]::Min(2, $gens.Count); $i++) {
         $letra = if ($i -eq 0) { 'C' } else { 'D' }
         $ip = if ($roles -contains $letra) { 'localhost' } else { $gens[$i] }
@@ -675,7 +686,7 @@ function Repair-Puertos([string[]]$Roles, $Cfg, [bool]$Corregir) {
 # Prometheus del nodo B: objetivos de los nodos generadores (no se pueden interpolar en el JSON)
 # =============================================================================================
 function Write-ObjetivosPrometheus($Cfg) {
-    $gens = Get-Generadores $Cfg
+    $gens = @(Get-Generadores $Cfg)
     # JSON armado a mano: ConvertTo-Json de PowerShell 5.1 cambia la forma de los arreglos de un elemento
     $grupos = @(@{ Variable = 'SIMULATOR_PORT'; Servicio = 'sensor-simulator' })
     if (Test-Workers $Cfg) {
@@ -847,7 +858,7 @@ function Invoke-Configurar {
                 $s = @()
                 if ($cfg['NODE_A_IP'] -eq $ipLocal) { $s += 'A' }
                 if ($cfg['NODE_B_IP'] -eq $ipLocal) { $s += 'B' }
-                $g = Get-Generadores $cfg
+                $g = @(Get-Generadores $cfg)
                 $idx = [array]::IndexOf([string[]]$g, [string]$ipLocal)
                 if ($idx -eq 0) { $s += 'C' } elseif ($idx -eq 1) { $s += 'D' }
                 $sugerido = $s -join ','
@@ -880,7 +891,7 @@ function Invoke-Configurar {
         $defB = if ($IpB) { $IpB } elseif ($roles -contains 'B' -and $ipLocal) { $ipLocal } else { $cfg['NODE_B_IP'] }
         $a = Read-Valor 'IP del nodo A (datos: Kafka, TimescaleDB, Redis)' $defA
         $b = Read-Valor 'IP del nodo B (servicios, consola, Grafana)' $defB
-        $gens = if ($Generadores) { @($Generadores -split '[,; ]+' | Where-Object { $_ }) } else { Get-Generadores $cfg }
+        $gens = @(if ($Generadores) { $Generadores -split '[,; ]+' | Where-Object { $_ } } else { Get-Generadores $cfg })
         foreach ($r in @('C', 'D')) {
             if ($roles -contains $r -and $ipLocal) {
                 $i = if ($r -eq 'C') { 0 } else { 1 }
@@ -1195,6 +1206,11 @@ function Invoke-Estado {
     }
     $unico = $roles -contains 'UNICO'
     $u = Get-Urls $cfg
+    if (-not $unico) {
+        Write-Titulo 'Configuración compartida (.env)'
+        Write-Info ("Nodo A {0} | Nodo B {1} | Generadores {2} | Workers {3}" -f $cfg['NODE_A_IP'], $cfg['NODE_B_IP'], $cfg['GENERATOR_IPS'], $cfg['WORKERS'])
+        Write-Info ("Huella {0}: debe ser la MISMA en todas las PCs; si difiere, copie el .env de la primera PC y repita 'configurar'" -f (Get-HuellaConfig $cfg))
+    }
     Write-Titulo 'Salud'
     $ipA = if ($unico) { 'localhost' } else { $cfg['NODE_A_IP'] }
     $kafkaPort = if ($unico) { Get-Puerto $cfg 'KAFKA_EXTERNAL_PORT' } else { Get-Puerto $cfg 'KAFKA_PORT' }
@@ -1209,7 +1225,7 @@ function Invoke-Estado {
         @('Nodo B - Prometheus', { Test-Http "$($u.Prometheus)/-/ready" })
     )
     foreach ($c in $chequeos) { if (& $c[1]) { Write-Ok $c[0] } else { Write-Fallo $c[0] } }
-    $gens = if ($unico) { @('localhost') } else { Get-Generadores $cfg }
+    $gens = @(if ($unico) { 'localhost' } else { Get-Generadores $cfg })
     $i = 0
     foreach ($g in $gens) {
         $letra = [char](67 + $i); $i++
