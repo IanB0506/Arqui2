@@ -80,7 +80,7 @@ alert-service/       persistencia, API, consola, tareas periódicas, migraciones
 infra/               Prometheus, Grafana (datasources y dashboards como código), reglas editables y respaldos
 deploy/              docker compose por nodo (A datos, B servicios, C/D generadores + workers)
 centinela.cmd/.ps1   operación completa desde Windows (configurar, iniciar, estado, demo, respaldos)
-docs/                arquitectura, ADRs, correlación, manual, resultados, guía de estudio, matriz de requisitos
+docs/                arquitectura, ADRs, correlación, manual, resultados, guía de estudio, matriz, JSON y comandos de la demo
 informe/             informe final y anexo de ADRs en Word (formato APA 7)
 ```
 
@@ -99,3 +99,5 @@ informe/             informe final y anexo de ADRs en Word (formato APA 7)
 | Evaluación de resultados | [`docs/resultados.md`](docs/resultados.md) |
 | Guía de estudio para la defensa | [`docs/guia-de-estudio.md`](docs/guia-de-estudio.md) |
 | Matriz de requisitos del enunciado y su evidencia | [`docs/matriz-de-requisitos.md`](docs/matriz-de-requisitos.md) |
+| Todos los JSON del proyecto (ejemplos reales capturados) | [`docs/json-del-proyecto.md`](docs/json-del-proyecto.md) |
+| Comandos de la demostración final | [`docs/comandos-demo.md`](docs/comandos-demo.md) |
