@@ -100,4 +100,5 @@ informe/             informe final y anexo de ADRs en Word (formato APA 7)
 | Guía de estudio para la defensa | [`docs/guia-de-estudio.md`](docs/guia-de-estudio.md) |
 | Matriz de requisitos del enunciado y su evidencia | [`docs/matriz-de-requisitos.md`](docs/matriz-de-requisitos.md) |
 | Todos los JSON del proyecto (ejemplos reales capturados) | [`docs/json-del-proyecto.md`](docs/json-del-proyecto.md) |
+| Todos los JSON, solo con su título y sus campos | [`docs/json-solo.md`](docs/json-solo.md) |
 | Comandos de la demostración final | [`docs/comandos-demo.md`](docs/comandos-demo.md) |
