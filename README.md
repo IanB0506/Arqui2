@@ -86,6 +86,9 @@ informe/             informe final y anexo de ADRs en Word (formato APA 7)
 
 ## Documentación (entregables de la sección 8)
 
+La versión para entregar al catedrático está en [`Entrega-Final/`](Entrega-Final/LEEME.md): solo los
+entregables del enunciado y el proyecto con los comentarios clave.
+
 | Entregable | Dónde |
 |---|---|
 | Diseño de infraestructura (nodos, servicios, segmentos de red) | [`docs/arquitectura.md`](docs/arquitectura.md), [`docs/img/infraestructura.png`](docs/img/infraestructura.png) |
