@@ -2,6 +2,7 @@
 
 Universidad Mariano Gálvez de Guatemala. Facultad de Ingeniería en Sistemas de Información y
 Ciencias de la Computación. Arquitectura de Computadores II, sección 040. Grupo 3.
+Catedrático: Wilmer Tezen.
 
 | Integrante | Carné |
 |---|---|
