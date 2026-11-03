@@ -123,9 +123,11 @@ que justifica cada una:
 
 En producción se usa Linux con Docker Engine, sin costo de licencias. En el laboratorio se usa
 Windows porque es el sistema de las PCs disponibles (ADR-005); los contenedores son los mismos. Las
-pruebas de varios nodos de este proyecto se hicieron con nodos lógicos (proyectos de Docker
-separados que se comunican por IP) en un solo equipo; deben repetirse en las PCs del laboratorio
-antes de la presentación.
+pruebas de varios nodos se hicieron con nodos lógicos (proyectos de Docker separados que solo se
+comunican por IP) en un solo equipo, y en el laboratorio se comprobó que un nodo se conecta al Kafka
+de otra PC. Como las redes inalámbricas disponibles aislaban a los equipos o se desconectaban, la
+puesta en simulación usa el modo de una sola máquina previsto en el ADR-005, con los mismos
+contenedores.
 
 Se diseña para el pico (×20) y no para el promedio. Como evolución futura queda la opción
 **híbrida**: enviar a la nube solo agregados anónimos (conteos por zona y hora) para analítica
