@@ -36,7 +36,7 @@ un proceso legal exija conservarlas (Home Office, s. f.).
 |---|---|---|---|
 | Guardar la placa en claro, con control de acceso | Investigación sencilla | Una fuga expone los movimientos de miles de personas | Descartada |
 | Cifrado reversible (AES) | Recuperable por orden judicial | Requiere gestión de llaves; sigue siendo dato personal pleno | Descartada para el almacenamiento general |
-| Hash simple (SHA-256) | Irreversible a simple vista | **Reversible por fuerza bruta**: las placas guatemaltecas tienen pocas combinaciones (≈ 10⁷) | Descartada |
+| Hash simple (SHA-256) | Irreversible a simple vista | **Reversible por fuerza bruta**: las placas guatemaltecas tienen pocas combinaciones (unos 10 millones) | Descartada |
 | **Seudonimización HMAC-SHA256 con llave secreta + placa enmascarada** | Sin la llave es irreversible; la misma placa da el mismo seudónimo, lo que permite correlacionar y seguir vehículos | Si la llave se filtra, hay que rotarla | **Elegida** |
 
 | Ubicación del ciudadano | Ventaja | Desventaja | Decisión |
