@@ -378,8 +378,8 @@ elección" (sección 4).
 32. *¿Qué aprendieron de las pruebas?* Que probar los escenarios de falla descubre defectos que el
     camino feliz no muestra. Primero encontramos 4 (entre ellos el spool sin permisos de escritura);
     después, apagando de verdad cada servidor, otras 8 brechas entre lo que el ADR prometía y lo que
-    el sistema hacía (por ejemplo, un robo durante la caída de A clasificado como falso positivo); al
-    grabar el video, 3 defectos más (un segundo robo que salía a los 90 s, la placa ajena en R6 y el
+    el sistema hacía (por ejemplo, un robo durante la caída de A clasificado como falso positivo); en
+    un ensayo de la demostración, 3 defectos más (un segundo robo que salía a los 90 s, la placa ajena en R6 y el
     mapa sin internet); y en la revisión final contra el enunciado, 10 más (por ejemplo, las 12 zonas
     en 7 particiones y la dependencia de los relojes). Todas están corregidas y vueltas a probar (ver
     `docs/resultados.md` y ADR-006).

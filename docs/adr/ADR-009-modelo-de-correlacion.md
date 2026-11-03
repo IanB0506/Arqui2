@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | Aceptado (revisado el 2026-10-22 tras grabar el video y el 2026-10-25 tras la revisión final) |
+| Estado | Aceptado (revisado el 2026-10-22 tras un ensayo de la demostración y el 2026-10-25 tras la revisión final) |
 | Fecha | 2026-10-09 |
 | Decisores | Equipo de arquitectura del proyecto |
 | Relacionados | ADR-002, ADR-004, ADR-006, ADR-008 |
@@ -59,10 +59,10 @@ Se implementa un **motor de reglas de evidencia ponderada** (`correlation-engine
   - se emite una revisión cuando sube la severidad o aparece la placa (ESCALATED) o cuando se suma un
     nuevo testigo que es ancla, como otro pánico (UPDATED). No se repite la alerta;
   - las coincidencias que alcanzan el umbral se prueban de mayor a menor puntaje hasta que una aporte
-    algo nuevo (corrección hecha al grabar el video: un segundo robo con el incidente abierto salía
+    algo nuevo (corrección hecha tras un ensayo de la demostración: un segundo robo con el incidente abierto salía
     recién a los 90 s);
   - una cámara que lee **otra** placa es otro vehículo y no corrobora a un ancla de placa (R6;
-    también corregido al grabar el video).
+    también corregido tras ese ensayo).
 - **Falsos positivos:**
   - un ancla que no se corrobora en 90 s produce `POSIBLE_FALSO_POSITIVO`, con severidad baja;
   - un dispositivo que presiona pánico más de 5 veces en 10 min se marca como sospechoso y se ignora

@@ -61,7 +61,7 @@ si puntaje ≥ umbral crítico  → la severidad sube a CRITICAL
      evidencia adicional que no cambia la severidad (p. ej. otro reporte cuando el robo ya es
      CRITICAL) no genera revisión, para no inundar la consola.
    - Nada nuevo: se prueba la coincidencia siguiente; si ninguna aporta, no se emite nada (se
-     evitan duplicados). Probar solo la mejor era un defecto, encontrado al grabar el video: un
+     evitan duplicados). Probar solo la mejor era un defecto, encontrado en un ensayo de la demostración: un
      segundo robo 2 a 5 minutos después del primero perdía frente a la coincidencia del primer pánico
      (que ya estaba en el incidente) y su revisión salía recién a los 90 s, al vencer el plazo de
      falso positivo.
@@ -172,7 +172,7 @@ reporte, R3 abre el incidente (HIGH) y luego R2 lo escala al llegar el reporte (
 - **Umbrales:** 0,70 / 0,95.
 - **Evidencia:** exceso de velocidad (+0,20) de un sensor de velocidad, que no lee placas, o de una
   cámara que lee la **misma** placa. Una cámara que identifica otra placa es otro vehículo y no
-  corrobora (corregido al grabar el video: un auto en fuga que pasaba por la zona escalaba la
+  corrobora (corregido tras un ensayo de la demostración: un auto en fuga que pasaba por la zona escalaba la
   alerta del vehículo robado).
 
 ### R7 - Emergencia médica (`EMERGENCIA_MEDICA`)
