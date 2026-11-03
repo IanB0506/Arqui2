@@ -1,0 +1,13 @@
+target/
+.env
+*.log
+# No usar "spool/" a secas: ignoraría el paquete common/.../spool/.
+/spool/
+/*/spool/
+.idea/
+.vscode/
+*.iml
+deploy/nodo-b/targets/generadores.json
+backups/
+.centinela/
+*.tar

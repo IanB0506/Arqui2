@@ -1,0 +1,5 @@
+[
+  { "targets": ["ingestion-service:8081"], "labels": { "servicio": "ingestion-service" } },
+  { "targets": ["correlation-engine:8082"], "labels": { "servicio": "correlation-engine" } },
+  { "targets": ["alert-service:8083"], "labels": { "servicio": "alert-service" } }
+]

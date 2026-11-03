@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: centinela
+    metrics_path: /actuator/prometheus
+    # Objetivos en targets/*.json: se agregan nodos sin reiniciar Prometheus.
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*.json"]
+        refresh_interval: 30s

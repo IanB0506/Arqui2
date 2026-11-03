@@ -1,0 +1,11 @@
+.git
+**/target/*
+!**/target/app.jar
+docs
+informe
+*.md
+**/.env
+backups
+.centinela
+deploy/nodo-b/targets/generadores.json
+*.tar

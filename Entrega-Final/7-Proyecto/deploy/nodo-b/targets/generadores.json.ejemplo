@@ -1,0 +1,5 @@
+[
+  { "targets": ["192.168.1.12:8080", "192.168.1.13:8080"], "labels": { "servicio": "sensor-simulator" } },
+  { "targets": ["192.168.1.12:8081", "192.168.1.13:8081"], "labels": { "servicio": "ingestion-service" } },
+  { "targets": ["192.168.1.12:8082", "192.168.1.13:8082"], "labels": { "servicio": "correlation-engine" } }
+]
